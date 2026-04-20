@@ -6,6 +6,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "db:init": "node src/scripts/dbInit.js",
+    "admin:bootstrap": "node src/scripts/createSuperAdmin.js",
     "test": "jest --verbose",
     "test:unit": "jest --verbose tests/unit",
     "test:integration": "jest --verbose tests/integration",
