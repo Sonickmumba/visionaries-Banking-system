@@ -94,16 +94,16 @@ export function UserManagementPage() {
   };
 
   return (
-    <div className="min-h-full bg-slate-50 px-4 py-6 md:px-6 lg:px-8">
+    <div className="min-h-full bg-slate-50 px-3 py-4 sm:px-4 sm:py-6 md:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl space-y-6">
-        <section className="overflow-hidden rounded-3xl border border-slate-200 bg-[linear-gradient(135deg,#0f172a_0%,#1d4ed8_50%,#0f766e_100%)] p-6 text-white shadow-xl md:p-8">
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-[linear-gradient(135deg,#0f172a_0%,#1d4ed8_50%,#0f766e_100%)] p-4 text-white shadow-xl sm:rounded-3xl sm:p-6 md:p-8">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-2xl">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] text-cyan-100">
                 <Shield className="h-4 w-4" />
                 Super Admin Controls
               </div>
-              <h2 className="mt-4 text-3xl font-bold tracking-tight md:text-4xl">User Management</h2>
+              <h2 className="mt-3 text-2xl font-bold tracking-tight sm:mt-4 sm:text-3xl md:text-4xl">User Management</h2>
               <p className="mt-3 text-sm text-blue-100 md:text-base">
                 Create admin accounts, promote trusted operators, and keep privileged access under direct super-admin control.
               </p>
@@ -113,7 +113,7 @@ export function UserManagementPage() {
               type="button"
               onClick={() => dispatch(fetchUsers())}
               disabled={loading}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               Refresh users
@@ -141,7 +141,7 @@ export function UserManagementPage() {
         )}
 
         <section className="grid gap-6 xl:grid-cols-[420px,minmax(0,1fr)]">
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:rounded-3xl sm:p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-semibold text-slate-900">Create Admin</h3>
@@ -171,7 +171,7 @@ export function UserManagementPage() {
             </form>
           </div>
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:rounded-3xl sm:p-6">
             <div>
               <h3 className="text-xl font-semibold text-slate-900">Access Directory</h3>
               <p className="mt-1 text-sm text-slate-600">
@@ -179,7 +179,69 @@ export function UserManagementPage() {
               </p>
             </div>
 
-            <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200">
+            <div className="mt-4 space-y-3 md:hidden">
+              {loading ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                  Loading users...
+                </div>
+              ) : users.length === 0 ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                  No users found.
+                </div>
+              ) : (
+                users.map((managedUser) => {
+                  const isSelf = managedUser.id === currentUser?.id;
+                  return (
+                    <article key={managedUser.id} className="rounded-2xl border border-slate-200 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-slate-900">{managedUser.full_name}</p>
+                          <p className="mt-1 text-xs text-slate-500">ID #{managedUser.id}</p>
+                        </div>
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            managedUser.status === 'active'
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          {managedUser.status}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 space-y-1 text-sm text-slate-600">
+                        <p className="break-all">{managedUser.email}</p>
+                        <p>{managedUser.phone || 'No phone'}</p>
+                        <p className="text-xs text-slate-500">
+                          Created: {managedUser.createdAt ? new Date(managedUser.createdAt).toLocaleDateString() : '-'}
+                        </p>
+                      </div>
+
+                      <div className="mt-3">
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Role
+                        </label>
+                        <select
+                          value={managedUser.role}
+                          disabled={isSelf || updatingUserId === managedUser.id}
+                          onChange={(event) => handleRoleChange(managedUser.id, event.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 disabled:cursor-not-allowed disabled:bg-slate-100"
+                        >
+                          {roleOptions.map((roleOption) => (
+                            <option key={roleOption.value} value={roleOption.value}>
+                              {roleOption.label}
+                            </option>
+                          ))}
+                        </select>
+                        {isSelf && <p className="mt-2 text-xs text-amber-600">Your own role is locked.</p>}
+                      </div>
+                    </article>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="mt-6 hidden overflow-hidden rounded-2xl border border-slate-200 md:block">
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-200 text-sm">
                   <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
