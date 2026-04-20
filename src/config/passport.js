@@ -89,7 +89,7 @@ const configurePassport = () => {
           }
 
           const user = result.rows[0];
-          if (!user.status) {
+          if (user.status !== 'active') {
             return done(null, false, { message: 'Your account has been deactivated' });
           }
 
