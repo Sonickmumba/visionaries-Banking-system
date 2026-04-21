@@ -51,7 +51,15 @@ const corsOptions = {
 };
 
 // Security headers
-app.use(helmet());
+// - HSTS disabled in dev: prevents the browser from forcing HTTPS on localhost,
+//   which would cause TLS errors for all subsequent requests (including swagger assets).
+// - CSP disabled in dev: swagger-ui requires unsafe-inline scripts/styles.
+app.use(
+  helmet({
+    hsts: isProduction,
+    contentSecurityPolicy: isProduction,
+  })
+);
 
 // CORS
 app.use(cors(corsOptions));
