@@ -9,9 +9,23 @@ const passport = require('passport');
 const cloudinary = require('cloudinary').v2;
 const configurePassport = require('./config/passport');
 const db = require('./config/database');
+const swaggerUi   = require('swagger-ui-express');
+const swaggerSpec = require('./config/swagger');
 
 // routes
-const authRoutes = require('./routes/authRoutes');
+const authRoutes             = require('./routes/authRoutes');
+const approvalsRoutes        = require('./routes/approvals');
+const cyclesRoutes           = require('./routes/cyclesRoutes');
+const declarationsRoutes     = require('./routes/declarationsRoutes');
+const filesRoutes            = require('./routes/filesRoutes');
+const loansRoutes            = require('./routes/loansRoutes');
+const loanRepaymentsRoutes   = require('./routes/loanRepaymentsRoutes');
+const membersRoutes          = require('./routes/membersRoutes');
+const monthProcessingRoutes  = require('./routes/monthProcessingRoutes');
+const penaltiesRoutes        = require('./routes/penaltiesRoutes');
+const reportsRoutes          = require('./routes/reportsRoutes');
+const savingsRoutes          = require('./routes/savingsRoutes');
+const commonInterestRoutes   = require('./routes/commonInterestRoutes');
 
 const app = express();
 
@@ -77,8 +91,32 @@ app.use(express.urlencoded({ extended: true }));
 app.use(passport.initialize());
 app.use(passport.session());
 
+// Swagger UI (disable in production if desired)
+if (process.env.NODE_ENV !== 'production') {
+  app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+    customSiteTitle: 'Visionaries Banking API Docs',
+    swaggerOptions: { persistAuthorization: true }
+  }));
+  app.get('/api/docs.json', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(swaggerSpec);
+  });
+}
+
 // Routes
-app.use('/api/auth', authRoutes);
+app.use('/api/auth',             authRoutes);
+app.use('/api/approvals',        approvalsRoutes);
+app.use('/api/cycles',           cyclesRoutes);
+app.use('/api/declarations',     declarationsRoutes);
+app.use('/api/files',            filesRoutes);
+app.use('/api/loans',            loansRoutes);
+app.use('/api/repayments',       loanRepaymentsRoutes);
+app.use('/api/members',          membersRoutes);
+app.use('/api/month-processing', monthProcessingRoutes);
+app.use('/api/penalties',        penaltiesRoutes);
+app.use('/api/reports',          reportsRoutes);
+app.use('/api/savings',          savingsRoutes);
+app.use('/api/common-interest',  commonInterestRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
