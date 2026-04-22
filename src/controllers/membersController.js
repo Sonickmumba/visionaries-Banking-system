@@ -2,9 +2,12 @@ const {
   getAllMembers,
   getMemberById,
   addMember,
+  enrollMember,
   updateMember,
   getMemberBalance,
-  getMemberTransactions
+  getMemberTransactions,
+  getPendingUsers,
+  approveAndEnroll,
 } = require('../models/membersModel');
 
 const MEMBER_ERRORS = {
@@ -130,11 +133,73 @@ async function updateMemberHandler(req, res, next) {
   }
 }
 
+// POST /api/members/enroll
+// Accepts { full_name, email, phone, address, cycle_id, joined_date }
+// Creates user (if new) + member atomically.
+async function enrollMemberHandler(req, res, next) {
+  try {
+    const { full_name, email, phone, address, cycle_id, joined_date } = req.body;
+    if (!full_name || !email || !cycle_id || !joined_date) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        required: ['full_name', 'email', 'cycle_id', 'joined_date'],
+      });
+    }
+    const { temporaryPassword, ...member } = await enrollMember({ full_name, email, phone, address, cycle_id, joined_date });
+    res.status(201).json({
+      message: 'Member enrolled successfully',
+      member,
+      // Only present when a brand-new user account was created.
+      // Show this once to the admin so they can pass it to the member.
+      ...(temporaryPassword ? { temporaryPassword } : {}),
+    });
+  } catch (error) {
+    handleMemberError(res, error, 'enroll member');
+  }
+}
+
+// GET /api/members/pending  (admin only)
+// Returns users with role=member and status=pending — awaiting enrollment approval.
+async function getPendingMembersHandler(req, res, next) {
+  try {
+    const users = await getPendingUsers();
+    res.json({ pendingUsers: users });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// POST /api/members/:userId/approve  (admin only)
+// Approves a pending user and enrolls them into the given cycle.
+async function approveMemberHandler(req, res, next) {
+  try {
+    const user_id = parseInt(req.params.userId, 10);
+    if (isNaN(user_id)) return res.status(400).json({ error: 'Invalid user ID' });
+
+    const { cycle_id, joined_date } = req.body;
+    if (!cycle_id || !joined_date) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        required: ['cycle_id', 'joined_date'],
+      });
+    }
+
+    const member = await approveAndEnroll({ user_id, cycle_id: parseInt(cycle_id, 10), joined_date });
+    res.status(201).json({ message: 'Member approved and enrolled successfully', member });
+  } catch (error) {
+    handleMemberError(res, error, 'approve member');
+  }
+}
+
 module.exports = {
-  getAllMembers:         getAllMembersHandler,
-  getMemberById:        getMemberByIdHandler,
-  getMemberBalance:     getMemberBalanceHandler,
+  getAllMembers:          getAllMembersHandler,
+  getMemberById:         getMemberByIdHandler,
+  getMemberBalance:      getMemberBalanceHandler,
   getMemberTransactions: getMemberTransactionsHandler,
-  addMember:            addMemberHandler,
-  updateMember:         updateMemberHandler
+  addMember:             addMemberHandler,
+  enrollMember:          enrollMemberHandler,
+  updateMember:          updateMemberHandler,
+  getPendingMembers:     getPendingMembersHandler,
+  approveMember:         approveMemberHandler,
 };
+

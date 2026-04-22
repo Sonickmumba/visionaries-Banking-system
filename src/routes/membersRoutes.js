@@ -55,6 +55,64 @@ router.get(
  *       200:
  *         description: Member details
  */
+/**
+ * @swagger
+ * /api/members/enroll:
+ *   post:
+ *     summary: Enroll a new member — creates user account + member record atomically (Admin only)
+ *     tags: [Members]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [full_name, email, cycle_id, joined_date]
+ *             properties:
+ *               full_name:   { type: string }
+ *               email:       { type: string, format: email }
+ *               phone:       { type: string }
+ *               address:     { type: string }
+ *               cycle_id:    { type: integer }
+ *               joined_date: { type: string, format: date }
+ *     responses:
+ *       201:
+ *         description: Member enrolled successfully
+ *       409:
+ *         description: Member already exists in this cycle
+ */
+router.post(
+  '/enroll',
+  authenticate,
+  isAdmin,
+  [
+    body('full_name').trim().notEmpty(),
+    body('email').isEmail().normalizeEmail(),
+    body('cycle_id').isInt(),
+    body('joined_date').isDate(),
+  ],
+  validate,
+  membersController.enrollMember
+);
+
+// GET /api/members/pending  — must be before /:id to avoid param conflict
+router.get('/pending', authenticate, isAdmin, membersController.getPendingMembers);
+
+// POST /api/members/:userId/approve  — approve pending user + enroll into cycle
+router.post(
+  '/:userId/approve',
+  authenticate,
+  isAdmin,
+  [
+    body('cycle_id').isInt(),
+    body('joined_date').isDate(),
+  ],
+  validate,
+  membersController.approveMember
+);
+
 router.get('/:id', authenticate, membersController.getMemberById);
 
 /**

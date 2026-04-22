@@ -139,11 +139,185 @@ async function getMemberTransactions(memberId, cycleId, filters = {}) {
   return result.rows;
 }
 
+/**
+ * Enroll a brand-new person as a member:
+ *  1. If a user with this email already exists, use them.
+ *  2. Otherwise INSERT into users with a placeholder password hash
+ *     (they must reset their password on first login).
+ *  3. INSERT into members for the given cycle.
+ *  4. Initialise monthly_balances for the current month.
+ *
+ * All steps run in a single transaction.
+ */
+async function enrollMember({ full_name, email, phone, address, cycle_id, joined_date }) {
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Resolve or create user
+    let userRow = (await client.query('SELECT id FROM users WHERE email = $1', [email])).rows[0];
+    let temporaryPassword = null; // only set for brand-new accounts
+
+    if (!userRow) {
+      const bcrypt = require('bcryptjs');
+      const crypto = require('crypto');
+      // Readable temporary password: e.g. "Visio-a3f8b2"
+      temporaryPassword = 'Visio-' + crypto.randomBytes(3).toString('hex');
+      const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+      userRow = (await client.query(
+        `INSERT INTO users (email, password_hash, full_name, phone, address, role, status)
+         VALUES ($1, $2, $3, $4, $5, 'member', 'active')
+         RETURNING id`,
+        [email.trim().toLowerCase(), passwordHash, full_name, phone, address]
+      )).rows[0];
+    }
+
+    // Guard: already a member of this cycle
+    const exists = await client.query(
+      'SELECT id FROM members WHERE user_id = $1 AND cycle_id = $2',
+      [userRow.id, cycle_id]
+    );
+    if (exists.rows[0]) throw new Error('Member already exists in this cycle');
+
+    // Add to members
+    const memberRow = (await client.query(
+      `INSERT INTO members (user_id, cycle_id, joined_date, status)
+       VALUES ($1, $2, $3, 'active')
+       RETURNING id, user_id, cycle_id, joined_date, status`,
+      [userRow.id, cycle_id, joined_date]
+    )).rows[0];
+
+    // Bump cycle member_count
+    await client.query(
+      'UPDATE cycles SET member_count = member_count + 1 WHERE id = $1',
+      [cycle_id]
+    );
+
+    // Initialise balance for the current month
+    const { current_month } = (await client.query(
+      'SELECT current_month FROM cycles WHERE id = $1',
+      [cycle_id]
+    )).rows[0];
+
+    await client.query(
+      `INSERT INTO monthly_balances (
+         member_id, cycle_id, month, savings_principal, accumulated_savings,
+         outstanding_loan, cumulative_borrowing, common_interest_due, penalties_due,
+         social_fund_paid, membership_fee_paid, compliance_status
+       ) VALUES ($1, $2, $3, 0, 0, 0, 0, 0, 0, false, false, 'never_borrowed')`,
+      [memberRow.id, cycle_id, current_month]
+    );
+
+    await client.query('COMMIT');
+    return { ...memberRow, temporaryPassword };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * List users with role='member' and status='pending'.
+ * These are people who registered but haven't been enrolled in any cycle yet.
+ */
+async function getPendingUsers() {
+  const result = await db.query(`
+    SELECT id, email, full_name, phone, address, created_at
+    FROM   users
+    WHERE  role   = 'member'
+      AND  status = 'pending'
+    ORDER  BY created_at ASC
+  `);
+  return result.rows;
+}
+
+/**
+ * Approve a pending user and enroll them into the given cycle.
+ *  1. Validates user exists and is pending.
+ *  2. Sets user.status = 'active'.
+ *  3. Creates the members row.
+ *  4. Initialises monthly_balances for current month.
+ *  5. Bumps cycle member_count.
+ * All steps run in a single transaction.
+ */
+async function approveAndEnroll({ user_id, cycle_id, joined_date }) {
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Validate user
+    const userResult = await client.query(
+      `SELECT id, status, role FROM users WHERE id = $1`,
+      [user_id]
+    );
+    const user = userResult.rows[0];
+    if (!user) throw new Error('User not found');
+    if (user.status !== 'pending') throw new Error('User is not in pending status');
+
+    // Guard duplicate enrollment
+    const existsResult = await client.query(
+      'SELECT id FROM members WHERE user_id = $1 AND cycle_id = $2',
+      [user_id, cycle_id]
+    );
+    if (existsResult.rows[0]) throw new Error('Member already exists in this cycle');
+
+    // Activate user
+    await client.query(
+      `UPDATE users SET status = 'active', updated_at = NOW() WHERE id = $1`,
+      [user_id]
+    );
+
+    // Create member row
+    const memberResult = await client.query(
+      `INSERT INTO members (user_id, cycle_id, joined_date, status)
+       VALUES ($1, $2, $3, 'active')
+       RETURNING id, user_id, cycle_id, joined_date, status`,
+      [user_id, cycle_id, joined_date]
+    );
+    const member = memberResult.rows[0];
+
+    // Bump cycle member_count
+    await client.query(
+      'UPDATE cycles SET member_count = member_count + 1 WHERE id = $1',
+      [cycle_id]
+    );
+
+    // Initialise monthly_balances for current month
+    const cycleResult = await client.query(
+      'SELECT current_month FROM cycles WHERE id = $1',
+      [cycle_id]
+    );
+    const { current_month } = cycleResult.rows[0];
+
+    await client.query(
+      `INSERT INTO monthly_balances (
+         member_id, cycle_id, month, savings_principal, accumulated_savings,
+         outstanding_loan, cumulative_borrowing, common_interest_due, penalties_due,
+         social_fund_paid, membership_fee_paid, compliance_status
+       ) VALUES ($1, $2, $3, 0, 0, 0, 0, 0, 0, false, false, 'never_borrowed')`,
+      [member.id, cycle_id, current_month]
+    );
+
+    await client.query('COMMIT');
+    return member;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   getAllMembers,
   getMemberById,
   addMember,
+  enrollMember,
   updateMember,
   getMemberBalance,
-  getMemberTransactions
+  getMemberTransactions,
+  getPendingUsers,
+  approveAndEnroll,
 };

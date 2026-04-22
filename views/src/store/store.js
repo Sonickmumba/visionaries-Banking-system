@@ -11,6 +11,7 @@ import {
   savingsReducer,
   userManagementReducer,
 } from './slices/index.js';
+import { api } from './api.js';
 
 export const store = configureStore({
   reducer: {
@@ -24,11 +25,12 @@ export const store = configureStore({
     monthlyReport: monthlyReportReducer,
     month: monthReducer,
     userManagement: userManagementReducer,
+    [api.reducerPath]: api.reducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({
       serializableCheck: false,
-    }),
+    }).concat(api.middleware),
 });
 
 export default store;

@@ -26,6 +26,7 @@ const penaltiesRoutes        = require('./routes/penaltiesRoutes');
 const reportsRoutes          = require('./routes/reportsRoutes');
 const savingsRoutes          = require('./routes/savingsRoutes');
 const commonInterestRoutes   = require('./routes/commonInterestRoutes');
+const dashboardRoutes        = require('./routes/dashboardRoutes');
 
 const app = express();
 
@@ -125,6 +126,7 @@ app.use('/api/penalties',        penaltiesRoutes);
 app.use('/api/reports',          reportsRoutes);
 app.use('/api/savings',          savingsRoutes);
 app.use('/api/common-interest',  commonInterestRoutes);
+app.use('/api/dashboard',        dashboardRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

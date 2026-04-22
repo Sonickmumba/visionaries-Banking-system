@@ -7,4 +7,4 @@ export { default as loanReducer, setCurrentLoan, setError as setLoanError, setLo
 export { default as notificationReducer, markAsRead, setError as setNotificationError, setLoading as setNotificationsLoading, setNotifications } from './notificationSlice.js';
 export { default as monthlyReportReducer, setError as setMonthlyReportError, setLoading as setMonthlyReportLoading, setReport } from './monthlyReportSlice.js';
 export { default as userManagementReducer, clearUserManagementFeedback, createAdminUser, fetchUsers, updateManagedUserRole } from './userManagementSlice.js';
-export { default as monthReducer, advanceToNextMonth, setMonth, resetMonth } from '../monthStore.js';
+export { default as monthReducer, advanceToNextMonth, setMonth, resetMonth } from './monthSlice.js';

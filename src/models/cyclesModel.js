@@ -2,9 +2,19 @@ const db = require('../config/database');
 
 async function getAllCycles() {
   const result = await db.query(
-    `SELECT id, name, start_date, end_date, current_month, status, config, member_count, created_at, updated_at
-     FROM cycles
-     ORDER BY created_at DESC`
+    // Join monthly_balances at the current month so totals reflect the live state.
+    // Using GROUP BY c.id (primary key) so PostgreSQL allows selecting all other
+    // cycle columns without listing them explicitly in GROUP BY.
+    `SELECT
+       c.id, c.name, c.start_date, c.end_date, c.current_month, c.status,
+       c.config, c.member_count, c.created_at, c.updated_at,
+       COALESCE(SUM(mb.accumulated_savings), 0) AS total_savings,
+       COALESCE(SUM(mb.outstanding_loan),   0) AS total_loans
+     FROM cycles c
+     LEFT JOIN monthly_balances mb
+            ON mb.cycle_id = c.id AND mb.month = c.current_month
+     GROUP BY c.id
+     ORDER BY c.created_at DESC`
   );
   return result.rows;
 }

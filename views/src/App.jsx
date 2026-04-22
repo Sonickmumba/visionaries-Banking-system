@@ -7,9 +7,9 @@ import { fetchCurrentUser } from './store';
 
 import { Login } from './pages/LoginPage';
 import { Register } from './pages/RegisterPage';
-import { Dashboard } from './pages/Dashboard';
-import { CyclesPage } from './pages/CyclesPage';
-import { MembersPage } from './pages/MembersPage';
+import Dashboard from './pages/Dashboard';
+import CyclesPage from './pages/CyclesPage';
+import MembersPage from './pages/MembersPage';
 import { SavingsPage } from './pages/SavingsPage';
 import { LoansPage } from './pages/LoansPage';
 import { DeclarationsPage } from './pages/DeclarationsPage';

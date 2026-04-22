@@ -63,11 +63,15 @@ const insertUser = async ({ email, password, full_name, phone, role }) => {
 
   const passwordHash = await bcrypt.hash(password, 10);
 
+  // Member-role users start as 'pending' — an admin must approve + enroll them.
+  // Admin/super_admin accounts are active immediately.
+  const initialStatus = role === ROLES.MEMBER ? 'pending' : 'active';
+
   const result = await db.query(
-    `INSERT INTO users (email, password_hash, full_name, phone, role)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO users (email, password_hash, full_name, phone, role, status)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, email, full_name, phone, role, status, created_at`,
-    [normalizedEmail, passwordHash, full_name.trim(), phone?.trim() || null, role]
+    [normalizedEmail, passwordHash, full_name.trim(), phone?.trim() || null, role, initialStatus]
   );
 
   return result.rows[0];
