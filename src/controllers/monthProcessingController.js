@@ -5,10 +5,12 @@ const {
 } = require('../models/monthlyProcessingsModel');
 
 const PROCESSING_ERRORS = {
-  'Cycle not found':                    [404, 'Cycle not found'],
-  'No active cycle':                    [400, 'No active cycle found'],
-  'Month already processed':            [400, 'Month has already been processed'],
-  'Cannot rollback: already at month 1': [400, 'Cannot rollback: already at month 1']
+  'Cycle not found':                        [404, 'Cycle not found'],
+  'No active cycle':                        [400, 'No active cycle found'],
+  'Month already processed':                [400, 'Month has already been processed'],
+  'Cannot advance beyond cycle end date':   [400, 'Cannot advance beyond cycle end date — the cycle has reached its final month'],
+  'Cannot rollback from month 1':           [400, 'Cannot rollback — already at month 1'],
+  'Cannot rollback: already at month 1':    [400, 'Cannot rollback — already at month 1'],
 };
 
 function handleProcessingError(res, error, context) {

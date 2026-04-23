@@ -230,4 +230,20 @@ router.post(
  */
 router.get('/:loanId/repayments', authenticate, loanRepaymentsController.getRepaymentsByLoan);
 
+/**
+ * POST /api/loans/:id/repayment
+ * Record a direct principal + interest repayment (Admin only)
+ */
+router.post(
+  '/:id/repayment',
+  authenticate,
+  isAdmin,
+  [
+    body('principal_amount').isFloat({ min: 0.01 }),
+    body('date').isDate(),
+  ],
+  validate,
+  loansController.recordLoanRepayment
+);
+
 module.exports = router;

@@ -102,12 +102,12 @@ async function recordLoanRepaymentHandler(req, res, next) {
     const loanId = parseInt(req.params.id, 10);
     if (isNaN(loanId)) return res.status(400).json({ error: 'Invalid loan ID' });
 
-    const { amount } = req.body;
-    if (!amount) return res.status(400).json({ error: 'amount is required' });
+    const { principal_amount } = req.body;
+    if (!principal_amount) return res.status(400).json({ error: 'principal_amount is required' });
 
-    const parsedAmount = parseFloat(amount);
+    const parsedAmount = parseFloat(principal_amount);
     if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      return res.status(400).json({ error: 'amount must be a number greater than 0' });
+      return res.status(400).json({ error: 'principal_amount must be a number greater than 0' });
     }
 
     const result = await recordLoanRepayment({ ...req.body, loan_id: loanId });

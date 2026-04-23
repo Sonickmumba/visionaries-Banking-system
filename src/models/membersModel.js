@@ -6,7 +6,8 @@ async function getAllMembers(cycleId, filters = {}) {
       m.id, m.user_id, m.cycle_id, m.joined_date, m.status,
       u.email, u.full_name, u.phone, u.address,
       mb.savings_principal, mb.accumulated_savings, mb.outstanding_loan,
-      mb.cumulative_borrowing, mb.compliance_status
+      mb.cumulative_borrowing, mb.common_interest_due,
+      mb.social_fund_paid, mb.membership_fee_paid, mb.compliance_status
     FROM members m
     JOIN users u ON m.user_id = u.id
     LEFT JOIN monthly_balances mb ON m.id = mb.member_id AND mb.month = (

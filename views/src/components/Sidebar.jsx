@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useSelector } from 'react-redux';
+import { useGetActiveCycleQuery } from '../store/api.js';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '📊', roles: ['super_admin', 'admin', 'member'] },
@@ -15,7 +16,9 @@ const navItems = [
 
 export default function Sidebar({ onNavigate }) {
   const { user } = useSelector((state) => state.auth);
-  const currentMonth = useSelector((state) => state.month.currentMonth);
+  const { data: cycle } = useGetActiveCycleQuery();
+  const currentMonth = cycle?.currentMonth ?? 1;
+  const cycleName    = cycle?.name ?? null;
   const userRole = user?.role || 'member';
 
   const visibleItems = navItems.filter((item) => item.roles.includes(userRole));
@@ -40,6 +43,7 @@ export default function Sidebar({ onNavigate }) {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs text-gray-400">Current Cycle</p>
+            {cycleName && <p className="text-xs text-blue-400 truncate">{cycleName}</p>}
             <p className="font-semibold text-blue-300">Month {currentMonth}</p>
           </div>
           <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">

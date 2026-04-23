@@ -47,13 +47,37 @@ async function processMonthEnd(cycleId) {
       const savingsInterest     = parseFloat(currentBalance.accumulated_savings || 0) * interestRate;
       const newAccumulatedSavings = parseFloat(currentBalance.accumulated_savings || 0) + savingsInterest;
 
-      const loanInterestResult = await client.query(
-        `SELECT COALESCE(SUM(monthly_interest), 0) AS total_loan_interest
+      // ── Compound each active loan and accumulate total interest accrued ──
+      const activeLoansResult = await client.query(
+        `SELECT id, outstanding_balance, monthly_interest
          FROM loans
          WHERE member_id = $1 AND cycle_id = $2 AND status IN ('disbursed', 'approved')`,
         [memberId, cycleId]
       );
-      const loanInterest = parseFloat(loanInterestResult.rows[0].total_loan_interest || 0);
+      const activeLoans = activeLoansResult.rows;
+
+      let loanInterest        = 0;
+      let totalNewOutstanding = 0;
+
+      for (const loan of activeLoans) {
+        const outstanding   = parseFloat(loan.outstanding_balance);
+        const interest      = parseFloat(loan.monthly_interest);
+        const newOutstanding = outstanding + interest;
+        // Next month's interest is based on the new (compounded) balance
+        const newMonthlyInterest = newOutstanding * interestRate;
+
+        await client.query(
+          `UPDATE loans
+           SET outstanding_balance = $1,
+               monthly_interest    = $2,
+               updated_at          = CURRENT_TIMESTAMP
+           WHERE id = $3`,
+          [newOutstanding, newMonthlyInterest, loan.id]
+        );
+
+        loanInterest        += interest;
+        totalNewOutstanding += newOutstanding;
+      }
 
       await client.query(
         `INSERT INTO monthly_balances (
@@ -68,12 +92,22 @@ async function processMonthEnd(cycleId) {
           memberId, cycleId, nextMonth,
           currentBalance.savings_principal || 0,
           newAccumulatedSavings,
-          currentBalance.outstanding_loan      || 0,
-          currentBalance.cumulative_borrowing  || 0,
+          totalNewOutstanding,                       // compounded outstanding
+          currentBalance.cumulative_borrowing  || 0, // principal borrowed (unchanged)
           0, 0,
           currentBalance.social_fund_paid      || false,
           currentBalance.membership_fee_paid   || false
         ]
+      );
+
+      // Write the finalised interest and end-of-month accumulated value back to
+      // the savings row for the month just closed so the frontend shows real data.
+      await client.query(
+        `UPDATE savings
+         SET savings_interest   = $1,
+             accumulated_savings = $2
+         WHERE member_id = $3 AND cycle_id = $4 AND month = $5`,
+        [savingsInterest, newAccumulatedSavings, memberId, cycleId, currentMonth]
       );
 
       if (savingsInterest > 0) {

@@ -19,7 +19,7 @@ export const api = createApi({
   }),
 
   // Cache tags used for automatic invalidation
-  tagTypes: ['Dashboard', 'Cycle', 'CommonInterest', 'Members', 'PendingMembers', 'Loans', 'Declarations'],
+  tagTypes: ['Dashboard', 'Cycle', 'CommonInterest', 'Members', 'PendingMembers', 'Loans', 'Declarations', 'Savings'],
 
   // Keep unused cache entries for 60 s before garbage collection
   keepUnusedDataFor: 60,
@@ -148,8 +148,70 @@ export const api = createApi({
         url: '/loans',
         params: { cycleId, status, member_id },
       }),
-      transformResponse: (res) => res.data,
+      transformResponse: (res) =>
+        (res.loans ?? []).map((l) => ({
+          id:                 l.id,
+          memberId:           l.member_id,
+          cycleId:            l.cycle_id,
+          loanType:           l.loan_type,
+          amount:             Number(l.amount             ?? 0),
+          disbursedDate:      l.disbursed_date,
+          outstandingBalance: Number(l.outstanding_balance ?? 0),
+          monthlyInterest:    Number(l.monthly_interest    ?? 0),
+          status:             l.status,
+          userId:             l.user_id,
+          memberName:         l.member_name ?? '',
+        })),
       providesTags: ['Loans'],
+    }),
+
+    /**
+     * GET /api/loans/stats?cycleId=N
+     * Aggregate totals for the summary cards.
+     */
+    getLoansStats: builder.query({
+      query: ({ cycleId }) => ({
+        url: '/loans/stats',
+        params: { cycleId },
+      }),
+      transformResponse: (res) => {
+        const s = res.stats ?? {};
+        return {
+          totalLoans:            Number(s.total_loans             ?? 0),
+          totalAmountDisbursed:  Number(s.total_amount_disbursed  ?? 0),
+          totalOutstanding:      Number(s.total_outstanding        ?? 0),
+          totalMonthlyInterest:  Number(s.total_monthly_interest   ?? 0),
+          activeLoans:           Number(s.active_loans             ?? 0),
+          repaidLoans:           Number(s.repaid_loans             ?? 0),
+        };
+      },
+      providesTags: ['Loans'],
+    }),
+
+    /**
+     * POST /api/loans/disburse  (admin only)
+     * Body: { member_id, cycle_id, loan_type, amount, disbursed_date }
+     */
+    disburseLoan: builder.mutation({
+      query: (body) => ({
+        url:    '/loans/disburse',
+        method: 'POST',
+        body,
+      }),
+      invalidatesTags: ['Loans', 'Dashboard', 'Members'],
+    }),
+
+    /**
+     * POST /api/loans/:loanId/repayment  (admin only)
+     * Body: { principal_amount, interest_amount?, date }
+     */
+    recordLoanRepayment: builder.mutation({
+      query: ({ loanId, ...body }) => ({
+        url:    `/loans/${loanId}/repayment`,
+        method: 'POST',
+        body,
+      }),
+      invalidatesTags: ['Loans', 'Dashboard', 'Members'],
     }),
 
     // ── Members ─────────────────────────────────────────────────────────────
@@ -179,6 +241,9 @@ export const api = createApi({
           outstandingLoan:     Number(m.outstanding_loan     ?? 0),
           cumulativeBorrowing: Number(m.cumulative_borrowing ?? 0),
           savingsPrincipal:    Number(m.savings_principal    ?? 0),
+          commonInterestDue:   Number(m.common_interest_due  ?? 0),
+          socialFundPaid:      m.social_fund_paid      ?? false,
+          membershipFeePaid:   m.membership_fee_paid   ?? false,
           complianceStatus:    m.compliance_status ?? 'never_borrowed',
         })),
       providesTags: ['Members'],
@@ -269,6 +334,67 @@ export const api = createApi({
       transformResponse: (res) => res.data,
       providesTags: ['Declarations'],
     }),
+
+    // ── Savings ──────────────────────────────────────────────────────────────
+    /**
+     * GET /api/savings?cycleId=N&month=N
+     * Returns savings records for every member in the cycle for the given month.
+     */
+    getSavings: builder.query({
+      query: ({ cycleId, month }) => ({
+        url:    '/savings',
+        params: { cycleId, month },
+      }),
+      transformResponse: (res) =>
+        (res.savings ?? []).map((s) => ({
+          id:                  s.id,
+          memberId:            s.member_id,
+          cycleId:             s.cycle_id,
+          month:               s.month,
+          principalDeposit:    Number(s.principal_deposit   ?? 0),
+          totalPrincipal:      Number(s.total_principal      ?? 0),
+          cumulativePrincipal: Number(s.cumulative_principal ?? 0),
+          savingsInterest:     Number(s.savings_interest     ?? 0),
+          accumulatedSavings:  Number(s.accumulated_savings  ?? 0),
+          memberName:          s.member_name ?? '',
+        })),
+      providesTags: ['Savings'],
+    }),
+
+    /**
+     * GET /api/savings/stats?cycleId=N&month=N
+     * Aggregate totals for the summary cards.
+     */
+    getSavingsStats: builder.query({
+      query: ({ cycleId, month }) => ({
+        url:    '/savings/stats',
+        params: { cycleId, month },
+      }),
+      transformResponse: (res) => {
+        const s = res.stats ?? {};
+        return {
+          totalDepositors:        Number(s.total_depositors         ?? 0),
+          totalPrincipalDeposited: Number(s.total_principal_deposited ?? 0),
+          totalPrincipal:          Number(s.total_principal           ?? 0),
+          totalInterest:           Number(s.total_interest            ?? 0),
+          totalAccumulated:        Number(s.total_accumulated         ?? 0),
+        };
+      },
+      providesTags: ['Savings'],
+    }),
+
+    /**
+     * POST /api/savings/deposit  (admin only)
+     * Body: { member_id, cycle_id, amount, date }
+     */
+    recordSavingsDeposit: builder.mutation({
+      query: (body) => ({
+        url:    '/savings/deposit',
+        method: 'POST',
+        body,
+      }),
+      invalidatesTags: ['Savings', 'Dashboard', 'Members'],
+    }),
   }),
 });
 
@@ -281,6 +407,9 @@ export const {
   useApplyCommonInterestMutation,
   useProcessMonthEndMutation,
   useGetLoansQuery,
+  useGetLoansStatsQuery,
+  useDisburseLoanMutation,
+  useRecordLoanRepaymentMutation,
   useGetMembersQuery,
   useGetMemberBalanceQuery,
   useEnrollMemberMutation,
@@ -288,4 +417,7 @@ export const {
   useGetPendingMembersQuery,
   useApproveMemberMutation,
   useGetDeclarationsQuery,
+  useGetSavingsQuery,
+  useGetSavingsStatsQuery,
+  useRecordSavingsDepositMutation,
 } = api;

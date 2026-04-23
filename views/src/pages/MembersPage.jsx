@@ -474,9 +474,9 @@ export default function MembersPage() {
                     </p>
                   </div>
                   <div className="bg-purple-50 p-4 rounded-lg">
-                    <p className="text-sm text-purple-700">Savings Principal</p>
+                    <p className="text-sm text-purple-700">Common Interest</p>
                     <p className="text-xl font-bold text-purple-900">
-                      K{selectedMember.savingsPrincipal.toLocaleString()}
+                      K{selectedMember.commonInterestDue.toLocaleString()}
                     </p>
                   </div>
                   <div className="bg-orange-50 p-4 rounded-lg">
@@ -487,11 +487,23 @@ export default function MembersPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 pt-4 border-t border-gray-200">
+                <div className="mt-4 pt-4 border-t border-gray-200 grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <p className="text-sm text-gray-600">Compliance Status</p>
                     <p className="font-medium text-gray-900 capitalize">
                       {selectedMember.complianceStatus.replace(/_/g, ' ')}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Social Fund</p>
+                    <p className={`font-medium ${selectedMember.socialFundPaid ? 'text-green-600' : 'text-red-500'}`}>
+                      {selectedMember.socialFundPaid ? '✅ Paid' : '❌ Unpaid'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Membership</p>
+                    <p className={`font-medium ${selectedMember.membershipFeePaid ? 'text-green-600' : 'text-red-500'}`}>
+                      {selectedMember.membershipFeePaid ? '✅ Paid' : '❌ Unpaid'}
                     </p>
                   </div>
                 </div>

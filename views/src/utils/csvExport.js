@@ -48,3 +48,44 @@ export function exportMembers(members) {
   const datePart = new Date().toISOString().slice(0, 10);
   downloadCsv(csv, `members-${datePart}.csv`);
 }
+
+export function exportSavings(savings) {
+  const columns = [
+    { key: 'memberName',        label: 'Member' },
+    { key: 'month',             label: 'Month' },
+    { key: 'principalDeposit',  label: 'Principal Deposit (K)' },
+    { key: 'totalPrincipal',    label: 'Total Principal (K)' },
+    { key: 'savingsInterest',   label: 'Interest (K)' },
+    { key: 'accumulatedSavings', label: 'Accumulated Savings (K)' },
+  ];
+  const csv      = toCsv(savings, columns);
+  const datePart = new Date().toISOString().slice(0, 10);
+  downloadCsv(csv, `savings-${datePart}.csv`);
+}
+
+export function exportTransactions(transactions) {
+  const columns = [
+    { key: 'memberName',  label: 'Member' },
+    { key: 'month',       label: 'Month' },
+    { key: 'type',        label: 'Type' },
+    { key: 'amount',      label: 'Amount (K)' },
+  ];
+  const csv      = toCsv(transactions, columns);
+  const datePart = new Date().toISOString().slice(0, 10);
+  downloadCsv(csv, `transactions-${datePart}.csv`);
+}
+
+export function exportLoans(loans) {
+  const columns = [
+    { key: 'memberName',         label: 'Member' },
+    { key: 'loanType',           label: 'Type' },
+    { key: 'amount',             label: 'Amount (K)' },
+    { key: 'disbursedDate',      label: 'Disbursed Date' },
+    { key: 'outstandingBalance', label: 'Outstanding (K)' },
+    { key: 'monthlyInterest',    label: 'Monthly Interest (K)' },
+    { key: 'status',             label: 'Status' },
+  ];
+  const csv      = toCsv(loans, columns);
+  const datePart = new Date().toISOString().slice(0, 10);
+  downloadCsv(csv, `loans-${datePart}.csv`);
+}

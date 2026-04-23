@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
+import toast from 'react-hot-toast';
 import { useGetActiveCycleQuery, useGetDashboardQuery, useApplyCommonInterestMutation, useProcessMonthEndMutation } from '../store/api.js';
 import {
   analyzeMembers,
@@ -99,8 +100,9 @@ export default function Dashboard() {
       await processMonthEnd({ cycleId }).unwrap();
 
       setShowCommonInterestModal(false);
+      toast.success('Month-end processing completed successfully');
     } catch (err) {
-      alert(err?.data?.error ?? 'Failed to process month-end. Please try again.');
+      toast.error(err?.data?.error ?? 'Failed to process month-end. Please try again.');
     }
   }, [cycleId, currentMonth, selectedAllocationMethod, applyCommonInterest, processMonthEnd]);
 
@@ -112,6 +114,16 @@ export default function Dashboard() {
   const monthLabel   = getMonthLabel(cycle?.startDate, currentMonth);
   const isPageBusy   = cycleLoading || dashLoading;
   const isRefetching = dashFetching && !dashLoading;
+
+  // Compute total months in the cycle (mirrors backend monthsDiff logic)
+  const totalMonths = (() => {
+    if (!cycle?.startDate || !cycle?.endDate) return null;
+    const start = new Date(cycle.startDate);
+    const end   = new Date(cycle.endDate);
+    return (end.getFullYear() - start.getFullYear()) * 12 +
+           (end.getMonth()   - start.getMonth())   + 1;
+  })();
+  const isLastMonth = totalMonths !== null && currentMonth >= totalMonths;
 
   // ── 8. Error / loading states ─────────────────────────────────────────────
   if (isPageBusy) {
@@ -147,16 +159,23 @@ export default function Dashboard() {
             Month {currentMonth} ({monthLabel}) — End of Month Summary
           </p>
         </div>
-        <button
-          onClick={() => setShowMonthEndModal(true)}
-          disabled={processing || applying}
-          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-          Advance to Month {currentMonth + 1}
-        </button>
+        <div className="flex flex-col items-end gap-1">
+          <button
+            onClick={() => setShowMonthEndModal(true)}
+            disabled={processing || applying || isLastMonth}
+            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            {isLastMonth ? 'Final Month Reached' : `Advance to Month ${currentMonth + 1}`}
+          </button>
+          {isLastMonth && (
+            <p className="text-xs text-red-600 font-medium">
+              Cycle ends at month {totalMonths} — no further advancement possible
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Month End Processing Modal */}

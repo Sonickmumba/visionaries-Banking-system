@@ -1,6 +1,7 @@
 import { Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
+import { Toaster } from 'react-hot-toast';
 import MainLayout from './layouts/MainLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import { fetchCurrentUser } from './store';
@@ -10,8 +11,8 @@ import { Register } from './pages/RegisterPage';
 import Dashboard from './pages/Dashboard';
 import CyclesPage from './pages/CyclesPage';
 import MembersPage from './pages/MembersPage';
-import { SavingsPage } from './pages/SavingsPage';
-import { LoansPage } from './pages/LoansPage';
+import SavingsPage from './pages/SavingsPage';
+import LoansPage from './pages/LoansPage';
 import { DeclarationsPage } from './pages/DeclarationsPage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
 import { ReportsPage } from './pages/ReportsPage';
@@ -40,6 +41,13 @@ export default function App() {
 
   return (
     <Suspense fallback={<Loading />}>
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 4000,
+          error: { duration: 5000 },
+        }}
+      />
       <Routes>
         {/* Public */}
         <Route
