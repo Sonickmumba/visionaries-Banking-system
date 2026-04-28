@@ -311,6 +311,73 @@ async function approveAndEnroll({ user_id, cycle_id, joined_date }) {
   }
 }
 
+/**
+ * Record a social fund or membership fee payment for a member.
+ * Enforced in month 1 only. Idempotent — throws if already paid.
+ */
+async function recordFeePayment(memberId, cycleId, feeType, paymentDate) {
+  const column = feeType === 'social_fund' ? 'social_fund_paid' : 'membership_fee_paid';
+  const txType = feeType === 'social_fund' ? 'social_fund_payment' : 'membership_fee_payment';
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Verify member belongs to cycle
+    const memberResult = await client.query(
+      'SELECT m.id, m.cycle_id FROM members m WHERE m.id = $1 AND m.cycle_id = $2 AND m.status = $3',
+      [memberId, cycleId, 'active']
+    );
+    if (!memberResult.rows[0]) throw new Error('Member not found in cycle');
+
+    // Fetch cycle: must be month 1 + get fee amount from config
+    const cycleResult = await client.query(
+      'SELECT current_month, config FROM cycles WHERE id = $1',
+      [cycleId]
+    );
+    if (!cycleResult.rows[0]) throw new Error('Cycle not found');
+
+    const { current_month, config } = cycleResult.rows[0];
+    if (current_month !== 1) {
+      throw new Error('Fee payments can only be recorded in month 1 of the cycle');
+    }
+
+    const amount = feeType === 'social_fund'
+      ? (config.socialFund || config.socialFundAmount || 0)
+      : (config.membershipFee || 0);
+
+    // Idempotency check — must be month 1 row
+    const balResult = await client.query(
+      `SELECT ${column} FROM monthly_balances WHERE member_id = $1 AND cycle_id = $2 AND month = 1`,
+      [memberId, cycleId]
+    );
+    if (!balResult.rows[0]) throw new Error('Monthly balance record not found for month 1');
+    if (balResult.rows[0][column]) throw new Error('Fee already recorded as paid');
+
+    // Mark paid — update ALL months (carries forward like processMonthEnd does)
+    await client.query(
+      `UPDATE monthly_balances SET ${column} = true WHERE member_id = $1 AND cycle_id = $2`,
+      [memberId, cycleId]
+    );
+
+    // Record transaction
+    await client.query(
+      `INSERT INTO transactions (member_id, cycle_id, month, type, amount, date, description)
+       VALUES ($1, $2, 1, $3, $4, $5, $6)`,
+      [memberId, cycleId, txType, amount, paymentDate,
+       `${feeType === 'social_fund' ? 'Social fund' : 'Membership fee'} payment recorded for member #${memberId}`]
+    );
+
+    await client.query('COMMIT');
+    return { memberId, cycleId, feeType, amount };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   getAllMembers,
   getMemberById,
@@ -321,4 +388,5 @@ module.exports = {
   getMemberTransactions,
   getPendingUsers,
   approveAndEnroll,
+  recordFeePayment,
 };
