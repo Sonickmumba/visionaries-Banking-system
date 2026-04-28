@@ -8,6 +8,7 @@ const {
   getMemberTransactions,
   getPendingUsers,
   approveAndEnroll,
+  recordFeePayment,
 } = require('../models/membersModel');
 
 const MEMBER_ERRORS = {
@@ -191,6 +192,40 @@ async function approveMemberHandler(req, res, next) {
   }
 }
 
+// PATCH /api/members/:id/fees  (admin only)
+// Body: { cycleId, feeType: 'social_fund' | 'membership_fee', paymentDate }
+async function recordFeePaymentHandler(req, res, next) {
+  try {
+    const memberId = parseInt(req.params.id, 10);
+    if (isNaN(memberId)) return res.status(400).json({ error: 'Invalid member ID' });
+
+    const { cycleId, feeType, paymentDate } = req.body;
+    if (!cycleId || !feeType || !paymentDate) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        required: ['cycleId', 'feeType', 'paymentDate'],
+      });
+    }
+    if (!['social_fund', 'membership_fee'].includes(feeType)) {
+      return res.status(400).json({ error: 'feeType must be social_fund or membership_fee' });
+    }
+
+    const result = await recordFeePayment(memberId, parseInt(cycleId, 10), feeType, paymentDate);
+    res.json({ message: 'Fee payment recorded successfully', ...result });
+  } catch (error) {
+    const FEE_ERRORS = {
+      'Member not found in cycle':                             [404, 'Member not found in cycle'],
+      'Cycle not found':                                       [404, 'Cycle not found'],
+      'Fee payments can only be recorded in month 1 of the cycle': [400, 'Fee payments can only be recorded in month 1 of the cycle'],
+      'Monthly balance record not found for month 1':          [404, 'Monthly balance record not found for month 1'],
+      'Fee already recorded as paid':                          [409, 'Fee already recorded as paid'],
+    };
+    const mapped = FEE_ERRORS[error.message];
+    if (mapped) return res.status(mapped[0]).json({ error: mapped[1] });
+    next(error);
+  }
+}
+
 module.exports = {
   getAllMembers:          getAllMembersHandler,
   getMemberById:         getMemberByIdHandler,
@@ -201,5 +236,6 @@ module.exports = {
   updateMember:          updateMemberHandler,
   getPendingMembers:     getPendingMembersHandler,
   approveMember:         approveMemberHandler,
+  recordFeePayment:      recordFeePaymentHandler,
 };
 
