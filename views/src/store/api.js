@@ -552,6 +552,19 @@ export const api = createApi({
     }),
 
     /**
+     * PATCH /api/members/:id/fees  (admin only, month 1 only)
+     * Body: { cycleId, feeType: 'social_fund' | 'membership_fee', paymentDate }
+     */
+    recordFeePayment: builder.mutation({
+      query: ({ memberId, cycleId, feeType, paymentDate }) => ({
+        url:    `/members/${memberId}/fees`,
+        method: 'PATCH',
+        body:   { cycleId, feeType, paymentDate },
+      }),
+      invalidatesTags: ['Members', 'Dashboard'],
+    }),
+
+    /**
      * POST /api/common-interest/cycle/:cycleId/pay
      * Body: { member_id, month, amount, payment_date }
      * Records a member's common-interest payment (with optional late penalty).
@@ -619,4 +632,5 @@ export const {
   useRejectLoanRequestMutation,
   useApproveLoanRepaymentMutation,
   useRejectLoanRepaymentMutation,
+  useRecordFeePaymentMutation,
 } = api;
