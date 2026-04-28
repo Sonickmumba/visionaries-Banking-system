@@ -9,12 +9,14 @@ import {
   useApproveMemberMutation,
   usePayCommonInterestMutation,
   useEnforceCommonInterestMutation,
+  useRecordFeePaymentMutation,
 } from '../store/api.js';
 import { exportMembers } from '../utils/csvExport.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const INITIAL_FORM = { fullName: '', email: '', phone: '', address: '' };
 const INITIAL_CI_PAY = { amount: '', paymentDate: new Date().toISOString().split('T')[0] };
+const INITIAL_FEE_PAY = { paymentDate: new Date().toISOString().split('T')[0] };
 const TABS = ['Enrolled', 'Pending Approval'];
 
 // ─── MembersPage ─────────────────────────────────────────────────────────────
@@ -34,6 +36,7 @@ export default function MembersPage() {
   const [approveMember,          { isLoading: approving }]   = useApproveMemberMutation();
   const [payCommonInterest,      { isLoading: payingCI }]    = usePayCommonInterestMutation();
   const [enforceCommonInterest,  { isLoading: enforcing }]   = useEnforceCommonInterestMutation();
+  const [recordFeePayment,       { isLoading: payingFee }]   = useRecordFeePaymentMutation();
 
   const { data: pendingUsers = [] } = useGetPendingMembersQuery();
 
@@ -42,6 +45,10 @@ export default function MembersPage() {
   const [showCIPayModal,    setShowCIPayModal]     = useState(false);
   const [ciPayForm,         setCIPayForm]          = useState(INITIAL_CI_PAY);
   const [ciPayError,        setCIPayError]         = useState(null);
+  const [showFeeModal,      setShowFeeModal]       = useState(false);
+  const [feeModalType,      setFeeModalType]       = useState(null); // 'social_fund' | 'membership_fee'
+  const [feePayForm,        setFeePayForm]         = useState(INITIAL_FEE_PAY);
+  const [feePayError,       setFeePayError]        = useState(null);
   const [searchTerm,        setSearchTerm]       = useState('');
   const [selectedMemberId,  setSelectedMemberId] = useState(null);
   const [showAddModal,      setShowAddModal]      = useState(false);
@@ -176,6 +183,35 @@ export default function MembersPage() {
       toast.error(err?.data?.error ?? 'Failed to enforce common interest.');
     }
   }, [cycleId, currentMonth, enforceCommonInterest]);
+
+  const handleOpenFeeModal = useCallback((feeType) => {
+    setFeeModalType(feeType);
+    setFeePayError(null);
+    setFeePayForm(INITIAL_FEE_PAY);
+    setShowFeeModal(true);
+  }, []);
+
+  const handleFeePaySubmit = useCallback(
+    async (e) => {
+      e.preventDefault();
+      if (!cycleId || !selectedMember || !feeModalType) return;
+      setFeePayError(null);
+      try {
+        await recordFeePayment({
+          memberId:    selectedMember.id,
+          cycleId,
+          feeType:     feeModalType,
+          paymentDate: feePayForm.paymentDate,
+        }).unwrap();
+        const label = feeModalType === 'social_fund' ? 'Social fund' : 'Membership fee';
+        toast.success(`${label} payment recorded for ${selectedMember.fullName}`);
+        setShowFeeModal(false);
+      } catch (err) {
+        setFeePayError(err?.data?.error ?? 'Failed to record fee payment.');
+      }
+    },
+    [cycleId, selectedMember, feeModalType, feePayForm, recordFeePayment]
+  );
 
   // ── Loading / error ───────────────────────────────────────────────────────
   if (isLoading) {
@@ -566,12 +602,28 @@ export default function MembersPage() {
                     <p className={`font-medium ${selectedMember.socialFundPaid ? 'text-green-600' : 'text-red-500'}`}>
                       {selectedMember.socialFundPaid ? '✅ Paid' : '❌ Unpaid'}
                     </p>
+                    {!selectedMember.socialFundPaid && currentMonth === 1 && (
+                      <button
+                        onClick={() => handleOpenFeeModal('social_fund')}
+                        className="mt-2 text-xs px-2 py-1 bg-teal-600 text-white rounded hover:bg-teal-700"
+                      >
+                        Record Payment
+                      </button>
+                    )}
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">Membership</p>
                     <p className={`font-medium ${selectedMember.membershipFeePaid ? 'text-green-600' : 'text-red-500'}`}>
                       {selectedMember.membershipFeePaid ? '✅ Paid' : '❌ Unpaid'}
                     </p>
+                    {!selectedMember.membershipFeePaid && currentMonth === 1 && (
+                      <button
+                        onClick={() => handleOpenFeeModal('membership_fee')}
+                        className="mt-2 text-xs px-2 py-1 bg-teal-600 text-white rounded hover:bg-teal-700"
+                      >
+                        Record Payment
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -711,6 +763,65 @@ export default function MembersPage() {
                   className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm font-medium"
                 >
                   {payingCI ? 'Recording…' : 'Record Payment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* ── Fee Payment Modal ─────────────────────────────────────────────── */}
+      {showFeeModal && selectedMember && feeModalType && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Record {feeModalType === 'social_fund' ? 'Social Fund' : 'Membership Fee'} Payment
+              </h2>
+              <button onClick={() => setShowFeeModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+            </div>
+
+            <form onSubmit={handleFeePaySubmit} className="p-6 space-y-4">
+              <div className="bg-teal-50 rounded-lg p-3 text-sm text-teal-800">
+                <p className="font-medium">{selectedMember.fullName}</p>
+                <p className="mt-1 text-xs text-teal-600">
+                  This payment can only be recorded in month 1 of the cycle.
+                  The amount is determined by the cycle configuration.
+                </p>
+              </div>
+
+              {feePayError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-800 text-sm">
+                  {feePayError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Payment Date <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={feePayForm.paymentDate}
+                  onChange={(e) => setFeePayForm((p) => ({ ...p, paymentDate: e.target.value }))}
+                  required
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowFeeModal(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={payingFee}
+                  className="flex-1 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 text-sm font-medium"
+                >
+                  {payingFee ? 'Recording…' : 'Confirm Payment'}
                 </button>
               </div>
             </form>
