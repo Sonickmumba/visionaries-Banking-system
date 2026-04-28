@@ -58,15 +58,28 @@ export default function Dashboard() {
 
   const analysis = useMemo(() => analyzeMembers(monthlyBalances), [monthlyBalances]);
 
-  const { unborrowed, commonInterest } = useMemo(
+//   const { unborrowed, commonInterest } = useMemo(
+//     () => calculateUnborrowedAndInterest(
+//       stats.totalSavingsPrincipal ?? 0,
+//       stats.totalSocialFund       ?? 0,
+//       stats.totalMembershipFees   ?? 0,
+//       stats.totalOutstandingLoans ?? 0,
+//     ),
+//     [stats]
+//   );
+
+const { unborrowed, commonInterest } = useMemo(
     () => calculateUnborrowedAndInterest(
       stats.totalSavingsPrincipal ?? 0,
       stats.totalSocialFund       ?? 0,
       stats.totalMembershipFees   ?? 0,
-      stats.totalOutstandingLoans ?? 0,
+      stats.totalDisbursedPrincipal ?? 0,
     ),
     [stats]
   );
+
+  console.log(unborrowed)
+  console.log(stats)
 
   const previewAllocations = useMemo(
     () => calculateCommonInterestAllocations(
