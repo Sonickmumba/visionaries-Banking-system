@@ -37,7 +37,7 @@ export const logout = createAsyncThunk('auth/logout', async () => {
 export const fetchCurrentUser = createAsyncThunk('auth/fetchCurrentUser', async (_, { rejectWithValue }) => {
   try {
     const { data: res } = await axios.get('/api/auth/me');
-    return { user: res.data.data };
+    return { user: res.data };
   } catch {
     return rejectWithValue(null);
   }

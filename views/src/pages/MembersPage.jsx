@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
+import toast from 'react-hot-toast';
 import {
   useGetActiveCycleQuery,
   useGetMembersQuery,
@@ -6,11 +7,14 @@ import {
   useUpdateMemberStatusMutation,
   useGetPendingMembersQuery,
   useApproveMemberMutation,
+  usePayCommonInterestMutation,
+  useEnforceCommonInterestMutation,
 } from '../store/api.js';
 import { exportMembers } from '../utils/csvExport.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const INITIAL_FORM = { fullName: '', email: '', phone: '', address: '' };
+const INITIAL_CI_PAY = { amount: '', paymentDate: new Date().toISOString().split('T')[0] };
 const TABS = ['Enrolled', 'Pending Approval'];
 
 // ─── MembersPage ─────────────────────────────────────────────────────────────
@@ -25,14 +29,19 @@ export default function MembersPage() {
     { skip: !cycleId }
   );
 
-  const [enrollMember,        { isLoading: enrolling }]   = useEnrollMemberMutation();
-  const [updateMemberStatus,  { isLoading: updating }]    = useUpdateMemberStatusMutation();
-  const [approveMember,       { isLoading: approving }]   = useApproveMemberMutation();
+  const [enrollMember,           { isLoading: enrolling }]   = useEnrollMemberMutation();
+  const [updateMemberStatus,     { isLoading: updating }]    = useUpdateMemberStatusMutation();
+  const [approveMember,          { isLoading: approving }]   = useApproveMemberMutation();
+  const [payCommonInterest,      { isLoading: payingCI }]    = usePayCommonInterestMutation();
+  const [enforceCommonInterest,  { isLoading: enforcing }]   = useEnforceCommonInterestMutation();
 
   const { data: pendingUsers = [] } = useGetPendingMembersQuery();
 
   // ── Local state ───────────────────────────────────────────────────────────
   const [activeTab,         setActiveTab]         = useState('Enrolled');
+  const [showCIPayModal,    setShowCIPayModal]     = useState(false);
+  const [ciPayForm,         setCIPayForm]          = useState(INITIAL_CI_PAY);
+  const [ciPayError,        setCIPayError]         = useState(null);
   const [searchTerm,        setSearchTerm]       = useState('');
   const [selectedMemberId,  setSelectedMemberId] = useState(null);
   const [showAddModal,      setShowAddModal]      = useState(false);
@@ -129,6 +138,44 @@ export default function MembersPage() {
     },
     [cycleId, approveMember]
   );
+
+  // ── Common Interest payment handlers ──────────────────────────────────────
+  const handleCIPaySubmit = useCallback(
+    async (e) => {
+      e.preventDefault();
+      if (!cycleId || !selectedMember) return;
+      setCIPayError(null);
+      try {
+        await payCommonInterest({
+          cycleId,
+          member_id:    selectedMember.id,
+          month:        currentMonth,
+          amount:       parseFloat(ciPayForm.amount),
+          payment_date: ciPayForm.paymentDate,
+        }).unwrap();
+        toast.success('Common interest payment recorded');
+        setShowCIPayModal(false);
+        setCIPayForm(INITIAL_CI_PAY);
+      } catch (err) {
+        setCIPayError(err?.data?.error ?? 'Failed to record payment.');
+      }
+    },
+    [cycleId, currentMonth, selectedMember, ciPayForm, payCommonInterest]
+  );
+
+  const handleEnforceCI = useCallback(async () => {
+    if (!cycleId) return;
+    try {
+      const result = await enforceCommonInterest({ cycleId, month: currentMonth }).unwrap();
+      toast.success(
+        result?.converted > 0
+          ? `${result.converted} member(s) had unpaid common interest converted to loans`
+          : 'No unpaid common interest found for this month'
+      );
+    } catch (err) {
+      toast.error(err?.data?.error ?? 'Failed to enforce common interest.');
+    }
+  }, [cycleId, currentMonth, enforceCommonInterest]);
 
   // ── Loading / error ───────────────────────────────────────────────────────
   if (isLoading) {
@@ -456,9 +503,21 @@ export default function MembersPage() {
 
               {/* Financial Summary — uses balance columns joined by getMembers */}
               <div className="bg-white rounded-lg border border-gray-200 p-6">
-                <h3 className="text-lg font-bold text-gray-900 mb-4">
-                  Financial Summary (Month {currentMonth} — Current)
-                </h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold text-gray-900">
+                    Financial Summary (Month {currentMonth} — Current)
+                  </h3>
+                  {/* Enforce button: admin converts ALL unpaid CI for this month into loans */}
+                  {members.some((m) => m.commonInterestDue > 0) && (
+                    <button
+                      onClick={handleEnforceCI}
+                      disabled={enforcing}
+                      className="text-sm px-3 py-1.5 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {enforcing ? 'Enforcing…' : 'Enforce Unpaid CI → Loans'}
+                    </button>
+                  )}
+                </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-green-50 p-4 rounded-lg">
@@ -474,10 +533,18 @@ export default function MembersPage() {
                     </p>
                   </div>
                   <div className="bg-purple-50 p-4 rounded-lg">
-                    <p className="text-sm text-purple-700">Common Interest</p>
+                    <p className="text-sm text-purple-700">Common Interest Due</p>
                     <p className="text-xl font-bold text-purple-900">
                       K{selectedMember.commonInterestDue.toLocaleString()}
                     </p>
+                    {selectedMember.commonInterestDue > 0 && (
+                      <button
+                        onClick={() => { setCIPayError(null); setCIPayForm(INITIAL_CI_PAY); setShowCIPayModal(true); }}
+                        className="mt-2 text-xs px-2 py-1 bg-purple-600 text-white rounded hover:bg-purple-700"
+                      >
+                        Record Payment
+                      </button>
+                    )}
                   </div>
                   <div className="bg-orange-50 p-4 rounded-lg">
                     <p className="text-sm text-orange-700">Cumulative Borrowing</p>
@@ -572,6 +639,82 @@ export default function MembersPage() {
               </tbody>
             </table>
           )}
+        </div>
+      )}
+
+      {/* ── Common Interest Payment Modal ─────────────────────────────────── */}
+      {showCIPayModal && selectedMember && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Record Common Interest Payment</h2>
+              <button onClick={() => setShowCIPayModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+            </div>
+
+            <form onSubmit={handleCIPaySubmit} className="p-6 space-y-4">
+              <div className="bg-purple-50 rounded-lg p-3 text-sm text-purple-800">
+                <p className="font-medium">{selectedMember.fullName}</p>
+                <p>Amount due: <span className="font-bold">K{selectedMember.commonInterestDue.toLocaleString()}</span></p>
+                <p className="mt-1 text-xs text-purple-600">
+                  Payment window: 28th of current month – 3rd of next month.
+                  Payments after the 3rd incur a K100 late penalty.
+                </p>
+              </div>
+
+              {ciPayError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-800 text-sm">
+                  {ciPayError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Amount (K) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="0.01"
+                  max={selectedMember.commonInterestDue}
+                  step="0.01"
+                  value={ciPayForm.amount}
+                  onChange={(e) => setCIPayForm((p) => ({ ...p, amount: e.target.value }))}
+                  required
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  placeholder={`Max K${selectedMember.commonInterestDue}`}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Payment Date <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={ciPayForm.paymentDate}
+                  onChange={(e) => setCIPayForm((p) => ({ ...p, paymentDate: e.target.value }))}
+                  required
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCIPayModal(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={payingCI}
+                  className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm font-medium"
+                >
+                  {payingCI ? 'Recording…' : 'Record Payment'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

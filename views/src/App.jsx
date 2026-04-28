@@ -14,7 +14,7 @@ import MembersPage from './pages/MembersPage';
 import SavingsPage from './pages/SavingsPage';
 import LoansPage from './pages/LoansPage';
 import { DeclarationsPage } from './pages/DeclarationsPage';
-import { ApprovalsPage } from './pages/ApprovalsPage';
+import ApprovalsPage from './pages/ApprovalsPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { UserManagementPage } from './pages/UserManagementPage';
 import { NotFoundPage } from './pages/NotFoundPage';

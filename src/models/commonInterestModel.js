@@ -47,18 +47,20 @@ async function analyzeBorrowingPatterns(cycleId, month) {
 
   const totalsResult = await db.query(
     `SELECT
-       COALESCE(SUM(accumulated_savings), 0) AS total_savings,
-       COALESCE(SUM(outstanding_loan), 0)    AS total_loans
+       COALESCE(SUM(savings_principal),    0) AS total_savings,
+       COALESCE(SUM(cumulative_borrowing), 0) AS total_loans,
+       COUNT(*) FILTER (WHERE social_fund_paid)    AS social_fund_paid_count,
+       COUNT(*) FILTER (WHERE membership_fee_paid) AS membership_fee_paid_count
      FROM monthly_balances
      WHERE cycle_id = $1 AND month = $2`,
     [cycleId, month]
   );
 
-  const { total_savings, total_loans } = totalsResult.rows[0];
+  const { total_savings, total_loans, social_fund_paid_count, membership_fee_paid_count } = totalsResult.rows[0];
   const socialFundPerMember    = cycleConfig.socialFundAmount || 0;
   const membershipFeePerMember = cycleConfig.membershipFee    || 0;
-  const totalSocialFund        = socialFundPerMember    * members.length;
-  const totalMembershipFees    = membershipFeePerMember * members.length;
+  const totalSocialFund        = socialFundPerMember    * parseInt(social_fund_paid_count,    10);
+  const totalMembershipFees    = membershipFeePerMember * parseInt(membership_fee_paid_count, 10);
   const totalPool              = parseFloat(total_savings) + totalSocialFund + totalMembershipFees;
   const unborrowedMoney        = totalPool - parseFloat(total_loans);
   const interestRate           = cycleConfig.interestRate || 0.15;
@@ -77,7 +79,7 @@ async function analyzeBorrowingPatterns(cycleId, month) {
     borrowedBelowMinimumCount: borrowedBelowMinimum.length,
     borrowedAtOrAboveMinimumCount: borrowedAtOrAboveMinimum.length,
     totalSavings: parseFloat(total_savings),
-    totalLoans: parseFloat(total_loans),
+    totalLoans: parseFloat(total_loans),           // cumulative_borrowing (principal only)
     totalSocialFund, totalMembershipFees, totalPool,
     unborrowedMoney, unborrowedInterest, allMembersMetMinimum, availableMethods,
     memberDetails: { neverBorrowed, borrowedBelowMinimum, borrowedAtOrAboveMinimum }
@@ -240,9 +242,261 @@ async function getAllocations(cycleId, month) {
   return result.rows;
 }
 
+/**
+ * Record a common-interest payment made by a member.
+ *
+ * Business rules enforced here:
+ *   - Amount must not exceed common_interest_due for that month.
+ *   - If payment_date > 3rd of the NEXT calendar month → K100 late-payment
+ *     penalty is assessed and recorded in the penalties table.
+ *   - On full payment: common_interest_due zeroed in monthly_balances;
+ *     common_interest_allocations.status → 'paid'.
+ *   - On partial payment: common_interest_due reduced; allocation stays
+ *     'allocated' so admin can see the outstanding residual.
+ *
+ * @param {number} cycleId
+ * @param {number} memberId
+ * @param {number} month        - The month the charge belongs to (current_month at time of allocation)
+ * @param {number} amount       - Amount the member is paying now
+ * @param {string} paymentDate  - ISO date string e.g. '2026-05-02'
+ */
+async function payCommonInterest(cycleId, memberId, month, amount, paymentDate) {
+  const client = await db.pool.connect();
+  console.log(`Processing common interest payment: cycleId=${cycleId}, memberId=${memberId}, month=${month}, amount=${amount}, paymentDate=${paymentDate}`);
+  try {
+    await client.query('BEGIN');
+
+    // ── Validate allocation exists and charge amount ─────────────────────
+    // ── Find the oldest unpaid allocation for this member ────────────────
+    // The allocation month (cia.month) differs from the display month when
+    // common_interest_due has been carried forward across month boundaries.
+    // We look up the allocation independently and use `month` (the caller's
+    // current display month) only for monthly_balances updates.
+    const allocResult = await client.query(
+      `SELECT cia.id, cia.month AS allocation_month, cia.charge,
+              mb.common_interest_due,
+              c.start_date, c.config
+       FROM common_interest_allocations cia
+       JOIN monthly_balances mb ON mb.member_id = $1
+                                AND mb.cycle_id  = $2
+                                AND mb.month     = $3
+       JOIN cycles c ON c.id = cia.cycle_id
+       WHERE cia.member_id = $1 AND cia.cycle_id = $2 AND cia.status = 'allocated'
+       ORDER BY cia.month ASC
+       LIMIT 1`,
+      [memberId, cycleId, month]
+    );
+    if (!allocResult.rows[0]) {
+      throw new Error('No unpaid common interest allocation found for this member');
+    }
+
+    const { id: allocationId, allocation_month, charge, common_interest_due, start_date, config } = allocResult.rows[0];
+    const due = parseFloat(common_interest_due);
+
+    if (parseFloat(amount) <= 0) throw new Error('Payment amount must be greater than zero');
+    if (parseFloat(amount) > due) throw new Error(`Payment amount (${amount}) exceeds amount due (${due})`);
+
+    // ── Late-payment penalty check ────────────────────────────────────────
+    // Payment window: 28th of allocation month through 3rd of the NEXT calendar month.
+    // Deadline is computed from allocation_month (when the charge was raised),
+    // not from the current display month.
+    const cycleStart         = new Date(start_date);
+    const allocationCalMonth = (cycleStart.getMonth() + allocation_month - 1) % 12; // 0-based
+    const allocationYear     =
+      cycleStart.getFullYear() +
+      Math.floor((cycleStart.getMonth() + allocation_month - 1) / 12);
+    const nextCalMonth  = (allocationCalMonth + 1) % 12;
+    const nextCalYear   = allocationCalMonth === 11 ? allocationYear + 1 : allocationYear;
+    const deadlineDate  = new Date(Date.UTC(nextCalYear, nextCalMonth, 3, 23, 59, 59));
+
+    const paid   = new Date(paymentDate);
+    const isLate = paid > deadlineDate;
+
+    const latePenaltyAmount = config?.lateCommonInterestPenalty ?? 100;
+
+    // ── Apply the payment ────────────────────────────────────────────────
+    const newDue      = Math.max(0, due - parseFloat(amount));
+    const isFullyPaid = newDue === 0;
+    const allocStatus = isFullyPaid ? 'paid' : 'allocated';
+
+    // Update the DISPLAY month's monthly_balances (that's what the member sees)
+    await client.query(
+      `UPDATE monthly_balances
+       SET common_interest_due = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE member_id = $2 AND cycle_id = $3 AND month = $4`,
+      [newDue, memberId, cycleId, month]
+    );
+
+    // Update the allocation record by its primary key (avoids month confusion)
+    await client.query(
+      `UPDATE common_interest_allocations
+       SET status = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
+      [allocStatus, allocationId]
+    );
+
+    // Record transaction against the allocation month so the audit trail is correct
+    await client.query(
+      `INSERT INTO transactions (member_id, cycle_id, month, type, amount, date, description)
+       VALUES ($1, $2, $3, 'common_interest_payment', $4, $5, $6)`,
+      [memberId, cycleId, allocation_month, amount, paymentDate,
+       `Common interest payment (month ${allocation_month})${isLate ? ' — LATE' : ''}`]
+    );
+
+    let penaltyId = null;
+    if (isLate) {
+      const penResult = await client.query(
+        `INSERT INTO penalties (member_id, cycle_id, month, penalty_type, amount, status, reason)
+         VALUES ($1, $2, $3, 'late_common_interest', $4, 'assessed', $5)
+         RETURNING id`,
+        [memberId, cycleId, allocation_month, latePenaltyAmount,
+         `Common interest paid late (after 3rd of month following month ${allocation_month}). Payment date: ${paymentDate}`]
+      );
+      penaltyId = penResult.rows[0].id;
+
+      // Add penalty to DISPLAY month's balances so it shows immediately
+      await client.query(
+        `UPDATE monthly_balances
+         SET penalties_due = penalties_due + $1, updated_at = CURRENT_TIMESTAMP
+         WHERE member_id = $2 AND cycle_id = $3 AND month = $4`,
+        [latePenaltyAmount, memberId, cycleId, month]
+      );
+
+      await client.query(
+        `INSERT INTO transactions (member_id, cycle_id, month, type, amount, date, description)
+         VALUES ($1, $2, $3, 'penalty_assessed', $4, $5, $6)`,
+        [memberId, cycleId, allocation_month, latePenaltyAmount, paymentDate,
+         `Late common interest penalty — paid after deadline for month ${allocation_month}`]
+      );
+    }
+
+    await client.query('COMMIT');
+    return {
+      paid:          parseFloat(amount),
+      remaining:     newDue,
+      isFullyPaid,
+      isLate,
+      penaltyId,
+      allocationMonth: allocation_month,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Enforce common interest for members who haven't paid by the deadline.
+ *
+ * Called by admin (or automatically during processMonthEnd advance) after
+ * the 3rd of the month following allocation.
+ *
+ * For each member with common_interest_due > 0 in month N:
+ *   1. Converts the unpaid amount into a loan (type = 'common_interest').
+ *   2. Updates monthly_balances: outstanding_loan += amount, common_interest_due = 0.
+ *   3. Marks common_interest_allocations.status = 'paid' (settled via loan).
+ *   4. Records transaction of type 'common_interest_converted_to_loan'.
+ *
+ * @param {number} cycleId
+ * @param {number} month  - The month whose unpaid common interest to enforce
+ */
+async function enforceUnpaidCommonInterest(cycleId, month) {
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Fetch all members with outstanding common interest for this (display) month.
+    // Also join to find the actual allocation record (which may be from a prior month).
+    const unpaidResult = await client.query(
+      `SELECT mb.member_id, mb.common_interest_due,
+              cia.id AS allocation_id, cia.month AS allocation_month,
+              c.current_month, c.config
+       FROM monthly_balances mb
+       JOIN cycles c ON c.id = mb.cycle_id
+       LEFT JOIN LATERAL (
+         SELECT id, month FROM common_interest_allocations
+         WHERE member_id = mb.member_id AND cycle_id = mb.cycle_id AND status = 'allocated'
+         ORDER BY month ASC LIMIT 1
+       ) cia ON TRUE
+       WHERE mb.cycle_id = $1 AND mb.month = $2
+         AND mb.common_interest_due > 0`,
+      [cycleId, month]
+    );
+
+    if (unpaidResult.rows.length === 0) {
+      await client.query('COMMIT');
+      return { converted: 0, members: [] };
+    }
+
+    const cycleConfig = unpaidResult.rows[0].config;
+    const currentMonth = unpaidResult.rows[0].current_month;
+    const loanInterestRate = cycleConfig.interestRate || 0.15;
+    const converted = [];
+
+    for (const row of unpaidResult.rows) {
+      const memberId         = row.member_id;
+      const unpaidAmount     = parseFloat(row.common_interest_due);
+      const allocationId     = row.allocation_id;
+      const allocationMonth  = row.allocation_month;
+
+      // Create a loan for the unpaid common interest
+      const loanResult = await client.query(
+        `INSERT INTO loans (member_id, cycle_id, loan_type, amount, disbursed_date,
+                            outstanding_balance, monthly_interest, status)
+         VALUES ($1, $2, 'common_interest', $3, CURRENT_DATE, $3, $4, 'disbursed')
+         RETURNING id`,
+        [memberId, cycleId, unpaidAmount, unpaidAmount * loanInterestRate]
+      );
+      const loanId = loanResult.rows[0].id;
+
+      // Update the DISPLAY month's balances: outstanding_loan increases, common_interest_due cleared
+      await client.query(
+        `UPDATE monthly_balances
+         SET outstanding_loan     = outstanding_loan + $1,
+             cumulative_borrowing = cumulative_borrowing + $1,
+             common_interest_due  = 0,
+             updated_at           = CURRENT_TIMESTAMP
+         WHERE member_id = $2 AND cycle_id = $3 AND month = $4`,
+        [unpaidAmount, memberId, cycleId, month]
+      );
+
+      // Mark the allocation (by primary key to avoid month confusion)
+      if (allocationId) {
+        await client.query(
+          `UPDATE common_interest_allocations
+           SET status = 'paid', updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [allocationId]
+        );
+      }
+
+      await client.query(
+        `INSERT INTO transactions (member_id, cycle_id, month, type, amount, date, description)
+         VALUES ($1, $2, $3, 'common_interest_converted_to_loan', $4, CURRENT_DATE, $5)`,
+        [memberId, cycleId, currentMonth, unpaidAmount,
+         `Unpaid common interest (month ${allocationMonth ?? month}) K${unpaidAmount} converted to loan (id: ${loanId})`]
+      );
+
+      converted.push({ memberId, unpaidAmount, loanId, allocationMonth });
+    }
+
+    await client.query('COMMIT');
+    return { converted: converted.length, members: converted };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   analyzeBorrowingPatterns,
   calculateAllocations,
   applyAllocations,
-  getAllocations
+  getAllocations,
+  payCommonInterest,
+  enforceUnpaidCommonInterest,
 };

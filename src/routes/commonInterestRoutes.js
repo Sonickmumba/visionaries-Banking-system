@@ -180,4 +180,55 @@ router.get(
   commonInterestController.getAllocations
 );
 
+/**
+ * @swagger
+ * /api/common-interest/cycle/{cycleId}/pay:
+ *   post:
+ *     summary: Record a member's common interest payment
+ *     description: >
+ *       Records payment against common_interest_due. Automatically assesses
+ *       a late-payment penalty (default K100) if payment_date is after the
+ *       3rd of the calendar month following allocation.
+ *     tags: [Common Interest]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post(
+  '/cycle/:cycleId/pay',
+  authenticate,
+  isAdmin,
+  validate([
+    param('cycleId').isInt().withMessage('Valid cycle ID is required'),
+    body('member_id').isInt({ min: 1 }).withMessage('member_id is required'),
+    body('month').isInt({ min: 1 }).withMessage('month is required'),
+    body('amount').isFloat({ min: 0.01 }).withMessage('amount must be positive'),
+    body('payment_date').isDate().withMessage('payment_date must be a valid date (YYYY-MM-DD)'),
+  ]),
+  commonInterestController.payCommonInterest
+);
+
+/**
+ * @swagger
+ * /api/common-interest/cycle/{cycleId}/enforce:
+ *   post:
+ *     summary: Convert all unpaid common interest for a month into loans
+ *     description: >
+ *       For every member with common_interest_due > 0 in the given month,
+ *       creates a 'common_interest' loan, clears the due amount, and marks
+ *       the allocation as paid. Called by admin after the payment deadline.
+ *     tags: [Common Interest]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post(
+  '/cycle/:cycleId/enforce',
+  authenticate,
+  isAdmin,
+  validate([
+    param('cycleId').isInt().withMessage('Valid cycle ID is required'),
+    body('month').isInt({ min: 1 }).withMessage('month is required'),
+  ]),
+  commonInterestController.enforceUnpaidCommonInterest
+);
+
 module.exports = router;

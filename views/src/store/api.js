@@ -19,7 +19,7 @@ export const api = createApi({
   }),
 
   // Cache tags used for automatic invalidation
-  tagTypes: ['Dashboard', 'Cycle', 'CommonInterest', 'Members', 'PendingMembers', 'Loans', 'Declarations', 'Savings'],
+  tagTypes: ['Dashboard', 'Cycle', 'CommonInterest', 'Members', 'PendingMembers', 'Loans', 'Declarations', 'Savings', 'Approvals', 'Penalties'],
 
   // Keep unused cache entries for 60 s before garbage collection
   keepUnusedDataFor: 60,
@@ -326,13 +326,69 @@ export const api = createApi({
     }),
 
     // ── Declarations ─────────────────────────────────────────────────────────
+    /**
+     * GET /api/declarations?cycleId=N&month=N
+     */
     getDeclarations: builder.query({
       query: ({ cycleId, month } = {}) => ({
         url: '/declarations',
         params: { cycleId, month },
       }),
-      transformResponse: (res) => res.data,
+      transformResponse: (res) => res.declarations ?? [],
       providesTags: ['Declarations'],
+    }),
+
+    /**
+     * GET /api/declarations/stats?cycleId=N&month=N
+     */
+    getDeclarationStats: builder.query({
+      query: ({ cycleId, month }) => ({
+        url: '/declarations/stats',
+        params: { cycleId, month },
+      }),
+      transformResponse: (res) => res,
+      providesTags: ['Declarations'],
+    }),
+
+    /**
+     * GET /api/declarations/missing?cycleId=N&month=N
+     * Members who haven't submitted a declaration yet.
+     */
+    getMissingDeclarations: builder.query({
+      query: ({ cycleId, month }) => ({
+        url: '/declarations/missing',
+        params: { cycleId, month },
+      }),
+      transformResponse: (res) => res.members ?? [],
+      providesTags: ['Declarations'],
+    }),
+
+    /**
+     * POST /api/declarations
+     * Body: { member_id, cycle_id, savings_amount, loan_request,
+     *         principal_repayment, interest_repayment, payment_proof_id? }
+     * Creates a savings-declaration approval when savings_amount > 0.
+     */
+    submitDeclaration: builder.mutation({
+      query: (body) => ({
+        url:    '/declarations',
+        method: 'POST',
+        body,
+      }),
+      invalidatesTags: ['Declarations', 'Approvals'],
+    }),
+
+    // ── Penalties ────────────────────────────────────────────────────────────
+    /**
+     * GET /api/penalties/cycle/:cycleId?month=N
+     */
+    getPenalties: builder.query({
+      query: ({ cycleId, month } = {}) => ({
+        url: `/penalties/cycle/${cycleId}`,
+        params: month ? { month } : {},
+      }),
+      transformResponse: (res) => res.penalties ?? [],
+      providesTags: ['Penalties'],
     }),
 
     // ── Savings ──────────────────────────────────────────────────────────────
@@ -395,6 +451,111 @@ export const api = createApi({
       }),
       invalidatesTags: ['Savings', 'Dashboard', 'Members'],
     }),
+
+    // ── Approvals ────────────────────────────────────────────────────────────
+    /**
+     * GET /api/approvals/stats?cycleId=N
+     * Aggregate pending counts split by type.
+     */
+    getApprovalStats: builder.query({
+      query: ({ cycleId }) => ({
+        url:    '/approvals/stats',
+        params: { cycleId },
+      }),
+      transformResponse: (res) => res,
+      providesTags: ['Approvals'],
+    }),
+
+    /**
+     * GET /api/approvals?cycleId=N&type=...&status=...&limit=N&offset=N
+     * Paginated, filterable list of approvals.
+     */
+    getApprovals: builder.query({
+      query: ({ cycleId, type, status, limit = 50, offset = 0 } = {}) => ({
+        url:    '/approvals',
+        params: { cycleId, type, status, limit, offset },
+      }),
+      transformResponse: (res) => res.approvals ?? [],
+      providesTags: ['Approvals'],
+    }),
+
+    /**
+     * PATCH /api/approvals/savings/:id/approve  (admin only)
+     */
+    approveSavingsDeclaration: builder.mutation({
+      query: (approvalId) => ({
+        url:    `/approvals/savings/${approvalId}/approve`,
+        method: 'PATCH',
+      }),
+      invalidatesTags: ['Approvals', 'Savings', 'Declarations', 'Members', 'Dashboard'],
+    }),
+
+    /**
+     * PATCH /api/approvals/savings/:id/reject  (admin only)
+     * Body: { reason }
+     */
+    rejectSavingsDeclaration: builder.mutation({
+      query: ({ approvalId, reason }) => ({
+        url:    `/approvals/savings/${approvalId}/reject`,
+        method: 'PATCH',
+        body:   { reason },
+      }),
+      invalidatesTags: ['Approvals', 'Savings', 'Members'],
+    }),
+
+    /**
+     * PATCH /api/approvals/repayments/:id/approve  (admin only)
+     */
+    approveLoanRepayment: builder.mutation({
+      query: (approvalId) => ({
+        url:    `/approvals/repayments/${approvalId}/approve`,
+        method: 'PATCH',
+      }),
+      invalidatesTags: ['Approvals', 'Loans', 'Members', 'Dashboard'],
+    }),
+
+    /**
+     * PATCH /api/approvals/repayments/:id/reject  (admin only)
+     * Body: { reason }
+     */
+    rejectLoanRepayment: builder.mutation({
+      query: ({ approvalId, reason }) => ({
+        url:    `/approvals/repayments/${approvalId}/reject`,
+        method: 'PATCH',
+        body:   { reason },
+      }),
+      invalidatesTags: ['Approvals', 'Loans', 'Members'],
+    }),
+
+    /**
+     * POST /api/common-interest/cycle/:cycleId/pay
+     * Body: { member_id, month, amount, payment_date }
+     * Records a member's common-interest payment (with optional late penalty).
+     */
+    payCommonInterest: builder.mutation({
+      query: ({ cycleId, ...body }) => ({
+        url:    `/common-interest/cycle/${cycleId}/pay`,
+        method: 'POST',
+        body,
+      }),
+      transformResponse: (res) => res.data,
+      invalidatesTags: ['Members', 'Dashboard'],
+    }),
+
+    /**
+     * POST /api/common-interest/cycle/:cycleId/enforce
+     * Body: { month }
+     * Converts all unpaid common interest for a month into loans.
+     */
+    enforceCommonInterest: builder.mutation({
+      query: ({ cycleId, month }) => ({
+        url:    `/common-interest/cycle/${cycleId}/enforce`,
+        method: 'POST',
+        body:   { month },
+      }),
+      transformResponse: (res) => res.data,
+      invalidatesTags: ['Members', 'Dashboard', 'Loans'],
+    }),
   }),
 });
 
@@ -406,6 +567,8 @@ export const {
   useGetDashboardQuery,
   useApplyCommonInterestMutation,
   useProcessMonthEndMutation,
+  usePayCommonInterestMutation,
+  useEnforceCommonInterestMutation,
   useGetLoansQuery,
   useGetLoansStatsQuery,
   useDisburseLoanMutation,
@@ -417,7 +580,17 @@ export const {
   useGetPendingMembersQuery,
   useApproveMemberMutation,
   useGetDeclarationsQuery,
+  useGetDeclarationStatsQuery,
+  useGetMissingDeclarationsQuery,
+  useSubmitDeclarationMutation,
+  useGetPenaltiesQuery,
   useGetSavingsQuery,
   useGetSavingsStatsQuery,
   useRecordSavingsDepositMutation,
+  useGetApprovalStatsQuery,
+  useGetApprovalsQuery,
+  useApproveSavingsDeclarationMutation,
+  useRejectSavingsDeclarationMutation,
+  useApproveLoanRepaymentMutation,
+  useRejectLoanRepaymentMutation,
 } = api;

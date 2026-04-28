@@ -223,6 +223,8 @@ async function getApprovalStats(cycleId) {
 
 /**
  * Approve a savings declaration (transactional).
+ * Marks the declaration and approval approved, then commits the savings
+ * into the savings table and updates monthly_balances.
  */
 async function approveSavingsDeclaration(approvalId, reviewerId) {
   const client = await db.pool.connect();
@@ -238,6 +240,73 @@ async function approveSavingsDeclaration(approvalId, reviewerId) {
 
     const approval = approvalResult.rows[0];
     if (approval.status !== 'pending') throw new Error('Approval already processed');
+
+    // Fetch the full declaration
+    const declResult = await client.query(
+      'SELECT * FROM declarations WHERE id = $1',
+      [approval.entity_id]
+    );
+    if (!declResult.rows[0]) throw new Error('Declaration not found');
+    const decl = declResult.rows[0];
+
+    // Commit savings into savings table (if not already recorded)
+    if (parseFloat(decl.savings_amount) > 0) {
+      const cycleResult = await client.query(
+        'SELECT current_month, config FROM cycles WHERE id = $1',
+        [decl.cycle_id]
+      );
+      const config     = cycleResult.rows[0]?.config ?? {};
+      const maxSavings = config.maxSavings || 30000;
+
+      // Check cap
+      const cycleTotalResult = await client.query(
+        'SELECT COALESCE(SUM(total_principal), 0) AS cycle_total FROM savings WHERE member_id = $1 AND cycle_id = $2',
+        [decl.member_id, decl.cycle_id]
+      );
+      const existingTotal = parseFloat(cycleTotalResult.rows[0].cycle_total);
+      const newPrincipal  = parseFloat(decl.savings_amount);
+
+      if (existingTotal + newPrincipal > maxSavings) {
+        throw new Error(`Deposit would exceed cycle savings cap of K${maxSavings.toLocaleString()}`);
+      }
+
+      // Check not already committed (idempotency guard)
+      const existingSavings = await client.query(
+        'SELECT id FROM savings WHERE member_id = $1 AND cycle_id = $2 AND month = $3',
+        [decl.member_id, decl.cycle_id, decl.month]
+      );
+
+      if (!existingSavings.rows[0]) {
+        const memberNameResult = await client.query(
+          'SELECT u.full_name FROM members m JOIN users u ON m.user_id = u.id WHERE m.id = $1',
+          [decl.member_id]
+        );
+        const memberName = memberNameResult.rows[0]?.full_name || '';
+
+        await client.query(
+          `INSERT INTO savings
+             (member_id, cycle_id, month, principal_deposit, total_principal, savings_interest, accumulated_savings)
+           VALUES ($1, $2, $3, $4, $5, 0, $6)`,
+          [decl.member_id, decl.cycle_id, decl.month, newPrincipal, newPrincipal, newPrincipal]
+        );
+
+        await client.query(
+          `UPDATE monthly_balances
+           SET savings_principal   = savings_principal   + $1,
+               accumulated_savings = accumulated_savings + $1
+           WHERE member_id = $2 AND cycle_id = $3 AND month = $4`,
+          [newPrincipal, decl.member_id, decl.cycle_id, decl.month]
+        );
+
+        await client.query(
+          `INSERT INTO transactions
+             (member_id, cycle_id, month, type, amount, date, description)
+           VALUES ($1, $2, $3, 'savings_deposit', $4, NOW(), $5)`,
+          [decl.member_id, decl.cycle_id, decl.month, newPrincipal,
+           `Savings deposit approved for ${memberName} (declaration #${decl.id})`]
+        );
+      }
+    }
 
     await client.query(
       `UPDATE declarations

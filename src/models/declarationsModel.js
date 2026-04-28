@@ -95,7 +95,8 @@ async function submitDeclaration(declarationData) {
     );
     if (existingResult.rows[0]) throw new Error('Declaration already submitted for this month');
 
-    const needsApproval = savings_amount > 0 && payment_proof_id;
+    // Always require approval when savings are declared (payment_proof_id is optional but encouraged)
+    const needsApproval = savings_amount > 0;
     const status = needsApproval ? 'pending' : 'submitted';
 
     const declarationResult = await client.query(

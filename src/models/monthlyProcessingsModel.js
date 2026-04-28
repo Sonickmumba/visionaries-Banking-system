@@ -90,11 +90,12 @@ async function processMonthEnd(cycleId) {
          ON CONFLICT (member_id, cycle_id, month) DO NOTHING`,
         [
           memberId, cycleId, nextMonth,
-          currentBalance.savings_principal || 0,
+          currentBalance.savings_principal     || 0,
           newAccumulatedSavings,
-          totalNewOutstanding,                       // compounded outstanding
-          currentBalance.cumulative_borrowing  || 0, // principal borrowed (unchanged)
-          0, 0,
+          currentBalance.outstanding_loan      || 0, // principal net of repayments — no accrued interest
+          currentBalance.cumulative_borrowing  || 0,
+          currentBalance.common_interest_due   || 0, // carry forward — member still owes this next month
+          0,                                         // penalties_due reset — fresh each month
           currentBalance.social_fund_paid      || false,
           currentBalance.membership_fee_paid   || false
         ]

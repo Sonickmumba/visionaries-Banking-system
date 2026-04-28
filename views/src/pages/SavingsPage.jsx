@@ -99,6 +99,10 @@ export default function SavingsPage() {
   const totalAccumulated = stats?.totalAccumulated ?? savings.reduce((s, r) => s + r.accumulatedSavings, 0);
   const totalInterest    = stats?.totalInterest    ?? savings.reduce((s, r) => s + r.savingsInterest,    0);
 
+  console.log('stats:', stats);
+  console.log('savings:', savings);
+
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
