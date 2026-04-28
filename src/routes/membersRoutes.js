@@ -269,4 +269,50 @@ router.put(
   membersController.updateMember
 );
 
+/**
+ * @swagger
+ * /api/members/{id}/fees:
+ *   patch:
+ *     summary: Record a social fund or membership fee payment (Admin only, month 1 only)
+ *     tags: [Members]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [cycleId, feeType, paymentDate]
+ *             properties:
+ *               cycleId:     { type: integer }
+ *               feeType:     { type: string, enum: [social_fund, membership_fee] }
+ *               paymentDate: { type: string, format: date }
+ *     responses:
+ *       200:
+ *         description: Fee payment recorded
+ *       400:
+ *         description: Not month 1, or fee already paid
+ *       404:
+ *         description: Member or cycle not found
+ */
+router.patch(
+  '/:id/fees',
+  authenticate,
+  isAdmin,
+  [
+    body('cycleId').isInt(),
+    body('feeType').isIn(['social_fund', 'membership_fee']),
+    body('paymentDate').isDate(),
+  ],
+  validate,
+  membersController.recordFeePayment
+);
+
 module.exports = router;
