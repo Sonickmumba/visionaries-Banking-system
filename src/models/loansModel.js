@@ -95,7 +95,7 @@ async function disburseLoan(loanData) {
        SET outstanding_loan      = outstanding_loan + $1,
            cumulative_borrowing  = $2,
            compliance_status     = $3
-       WHERE member_id = $4 AND cycle_id = $5 AND month = $6`,
+       WHERE member_id = $4 AND cycle_id = $5 AND month >= $6`,
       [amount, newCumulativeBorrowing, complianceStatus, member_id, cycle_id, currentMonth]
     );
 
@@ -168,7 +168,7 @@ async function recordLoanRepayment(repaymentData) {
     await client.query(
       `UPDATE monthly_balances
        SET outstanding_loan = outstanding_loan - $1
-       WHERE member_id = $2 AND cycle_id = $3 AND month = $4`,
+       WHERE member_id = $2 AND cycle_id = $3 AND month >= $4`,
       [principal_amount, loan.member_id, loan.cycle_id, currentMonth]
     );
 

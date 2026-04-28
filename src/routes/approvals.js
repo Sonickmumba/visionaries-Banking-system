@@ -217,4 +217,64 @@ router.patch('/repayments/:id/approve', authenticate, isAdmin, approvalsControll
  */
 router.patch('/repayments/:id/reject', authenticate, isAdmin, approvalsController.rejectLoanRepayment);
 
+/**
+ * @swagger
+ * /api/approvals/loan-requests/{id}/approve:
+ *   patch:
+ *     summary: Approve a loan request (Admin only)
+ *     tags: [Approvals]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Loan request approved and loan created
+ *       403:
+ *         description: Forbidden - Admin only
+ *       404:
+ *         description: Approval not found
+ */
+router.patch('/loan-requests/:id/approve', authenticate, isAdmin, approvalsController.approveLoanRequest);
+
+/**
+ * @swagger
+ * /api/approvals/loan-requests/{id}/reject:
+ *   patch:
+ *     summary: Reject a loan request (Admin only)
+ *     tags: [Approvals]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [reason]
+ *             properties:
+ *               reason:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Loan request rejected
+ *       400:
+ *         description: Missing rejection reason
+ *       403:
+ *         description: Forbidden - Admin only
+ *       404:
+ *         description: Approval not found
+ */
+router.patch('/loan-requests/:id/reject', authenticate, isAdmin, approvalsController.rejectLoanRequest);
+
 module.exports = router;

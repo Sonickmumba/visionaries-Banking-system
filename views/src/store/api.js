@@ -528,6 +528,30 @@ export const api = createApi({
     }),
 
     /**
+     * PATCH /api/approvals/loan-requests/:id/approve  (admin only)
+     */
+    approveLoanRequest: builder.mutation({
+      query: (approvalId) => ({
+        url:    `/approvals/loan-requests/${approvalId}/approve`,
+        method: 'PATCH',
+      }),
+      invalidatesTags: ['Approvals', 'Loans', 'Declarations', 'Members', 'Dashboard'],
+    }),
+
+    /**
+     * PATCH /api/approvals/loan-requests/:id/reject  (admin only)
+     * Body: { reason }
+     */
+    rejectLoanRequest: builder.mutation({
+      query: ({ approvalId, reason }) => ({
+        url:    `/approvals/loan-requests/${approvalId}/reject`,
+        method: 'PATCH',
+        body:   { reason },
+      }),
+      invalidatesTags: ['Approvals', 'Loans', 'Declarations', 'Members'],
+    }),
+
+    /**
      * POST /api/common-interest/cycle/:cycleId/pay
      * Body: { member_id, month, amount, payment_date }
      * Records a member's common-interest payment (with optional late penalty).
@@ -591,6 +615,8 @@ export const {
   useGetApprovalsQuery,
   useApproveSavingsDeclarationMutation,
   useRejectSavingsDeclarationMutation,
+  useApproveLoanRequestMutation,
+  useRejectLoanRequestMutation,
   useApproveLoanRepaymentMutation,
   useRejectLoanRepaymentMutation,
 } = api;

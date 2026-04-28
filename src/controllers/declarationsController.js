@@ -73,7 +73,7 @@ async function getMemberDeclarationHandler(req, res, next) {
 // POST /api/declarations
 async function submitDeclarationHandler(req, res, next) {
   try {
-    const declarationData = { ...req.body, user_id: req.user.userId };
+    const declarationData = { ...req.body, user_id: req.user.id };
     const declaration = await submitDeclaration(declarationData);
 
     const message = declaration.status === 'pending'

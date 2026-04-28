@@ -4,6 +4,8 @@ const {
   getApprovalStats,
   approveSavingsDeclaration,
   rejectSavingsDeclaration,
+  approveLoanRequest,
+  rejectLoanRequest,
   approveLoanRepayment,
   rejectLoanRepayment
 } = require('../models/approvalsModel');
@@ -98,7 +100,7 @@ async function approveSavingsDeclarationHandler(req, res) {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ error: 'Invalid approval ID' });
 
-    await approveSavingsDeclaration(id, req.user.userId);
+    await approveSavingsDeclaration(id, req.user.id);
     res.json({ message: 'Savings declaration approved successfully' });
   } catch (error) {
     handleApprovalError(res, error, 'approve savings declaration');
@@ -120,7 +122,7 @@ async function rejectSavingsDeclarationHandler(req, res) {
       return res.status(400).json({ error: 'Rejection reason is required' });
     }
 
-    await rejectSavingsDeclaration(id, req.user.userId, reason.trim());
+    await rejectSavingsDeclaration(id, req.user.id, reason.trim());
     res.json({ message: 'Savings declaration rejected successfully' });
   } catch (error) {
     handleApprovalError(res, error, 'reject savings declaration');
@@ -137,7 +139,7 @@ async function approveLoanRepaymentHandler(req, res) {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ error: 'Invalid approval ID' });
 
-    await approveLoanRepayment(id, req.user.userId);
+    await approveLoanRepayment(id, req.user.id);
     res.json({ message: 'Loan repayment approved successfully' });
   } catch (error) {
     handleApprovalError(res, error, 'approve loan repayment');
@@ -159,10 +161,47 @@ async function rejectLoanRepaymentHandler(req, res) {
       return res.status(400).json({ error: 'Rejection reason is required' });
     }
 
-    await rejectLoanRepayment(id, req.user.userId, reason.trim());
+    await rejectLoanRepayment(id, req.user.id, reason.trim());
     res.json({ message: 'Loan repayment rejected successfully' });
   } catch (error) {
     handleApprovalError(res, error, 'reject loan repayment');
+  }
+}
+
+// PATCH /api/approvals/loan-requests/:id/approve
+async function approveLoanRequestHandler(req, res) {
+  try {
+    if (!REVIEWER_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions to approve loan requests' });
+    }
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid approval ID' });
+
+    await approveLoanRequest(id, req.user.id);
+    res.json({ message: 'Loan request approved successfully' });
+  } catch (error) {
+    handleApprovalError(res, error, 'approve loan request');
+  }
+}
+
+// PATCH /api/approvals/loan-requests/:id/reject
+async function rejectLoanRequestHandler(req, res) {
+  try {
+    if (!REVIEWER_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions to reject loan requests' });
+    }
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid approval ID' });
+
+    const { reason } = req.body;
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ error: 'Rejection reason is required' });
+    }
+
+    await rejectLoanRequest(id, req.user.id, reason.trim());
+    res.json({ message: 'Loan request rejected successfully' });
+  } catch (error) {
+    handleApprovalError(res, error, 'reject loan request');
   }
 }
 
@@ -172,6 +211,8 @@ module.exports = {
   getApprovalStats:             getApprovalStatsHandler,
   approveSavingsDeclaration:    approveSavingsDeclarationHandler,
   rejectSavingsDeclaration:     rejectSavingsDeclarationHandler,
+  approveLoanRequest:           approveLoanRequestHandler,
+  rejectLoanRequest:            rejectLoanRequestHandler,
   approveLoanRepayment:         approveLoanRepaymentHandler,
   rejectLoanRepayment:          rejectLoanRepaymentHandler
 };

@@ -57,13 +57,13 @@ async function analyzeBorrowingPatterns(cycleId, month) {
   );
 
   const { total_savings, total_loans, social_fund_paid_count, membership_fee_paid_count } = totalsResult.rows[0];
-  const socialFundPerMember    = cycleConfig.socialFundAmount || 0;
+  const socialFundPerMember    = cycleConfig.socialFund || cycleConfig.socialFundAmount || 0;
   const membershipFeePerMember = cycleConfig.membershipFee    || 0;
   const totalSocialFund        = socialFundPerMember    * parseInt(social_fund_paid_count,    10);
   const totalMembershipFees    = membershipFeePerMember * parseInt(membership_fee_paid_count, 10);
   const totalPool              = parseFloat(total_savings) + totalSocialFund + totalMembershipFees;
   const unborrowedMoney        = totalPool - parseFloat(total_loans);
-  const interestRate           = cycleConfig.interestRate || 0.15;
+  const interestRate           = cycleConfig.interestRate || cycleConfig.commonInterestRate || 0.15;
   const unborrowedInterest     = unborrowedMoney * interestRate;
   const allMembersMetMinimum   = borrowedAtOrAboveMinimum.length === members.length;
 

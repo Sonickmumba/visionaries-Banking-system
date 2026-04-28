@@ -33,7 +33,7 @@ async function getDashboardData(cycleId, month) {
     const resolvedMonth = month || cycle.current_month;
 
     // ── 2. Aggregated stats for that month ────────────────────────────────
-    const [statsResult, activeResult, penaltiesResult] = await Promise.all([
+    const [statsResult, activeResult, penaltiesResult, loanCashResult] = await Promise.all([
       client.query(
         `SELECT
            COUNT(mb.member_id)                           AS total_members,
@@ -61,21 +61,40 @@ async function getDashboardData(cycleId, month) {
          WHERE cycle_id = $1 AND month = $2 AND status = 'assessed'`,
         [cycleId, resolvedMonth]
       ),
+      // Net cash lent out: original principals disbursed minus principal actually repaid.
+      // This is the true cash-flow position — interest accruals are accounting entries, not cash movements.
+      client.query(
+        `SELECT
+           COALESCE(SUM(l.amount), 0)  AS total_disbursed_principal,
+           COALESCE(SUM(lr.amount), 0) AS total_repaid_principal
+         FROM loans l
+         LEFT JOIN loan_repayments lr
+               ON lr.loan_id = l.id AND lr.status = 'approved'
+         WHERE l.cycle_id = $1`,
+        [cycleId]
+      ),
     ]);
 
     const s = statsResult.rows[0];
 
-    // Compute unborrowed pool using the same formula as the calculator:
-    // pool = savingsPrincipal + socialFundCollected + membershipFeesCollected
-    // unborrowed = pool - totalLoansDisbursed
-    const socialFundPerMember    = parseFloat(cycleConfig.socialFundAmount || 0);
+    // Compute unborrowed pool (cash currently available in hand):
+    // pool = all cash collected (savings + social fund + membership fees)
+    // cash lent out (net) = total principals ever disbursed − principal already repaid (cash that returned)
+    // unborrowed = pool − net cash still out on loan
+    // NOTE: interest accruals are accounting entries, not cash movements — excluded here.
+    const socialFundPerMember    = parseFloat(cycleConfig.socialFund || cycleConfig.socialFundAmount || 0);
     const membershipFeePerMember = parseFloat(cycleConfig.membershipFee    || 0);
     const totalSocialFund        = socialFundPerMember    * parseInt(s.social_fund_paid_count,    10);
     const totalMembershipFees    = membershipFeePerMember * parseInt(s.membership_fee_paid_count, 10);
     const totalSavingsPrincipal  = parseFloat(s.total_savings_principal);
     const totalOutstandingLoans  = parseFloat(s.total_outstanding_loans);
-    const unborrowed             = (totalSavingsPrincipal + totalSocialFund + totalMembershipFees) - totalOutstandingLoans;
-    const interestRate           = parseFloat(cycleConfig.interestRate || 0.15);
+    const totalCumulativeBorrowing = parseFloat(s.total_cumulative_borrowing);
+    const totalDisbursedPrincipal  = parseFloat(loanCashResult.rows[0].total_disbursed_principal);
+    const totalRepaidPrincipal     = parseFloat(loanCashResult.rows[0].total_repaid_principal);
+    const netCashLentOut           = totalDisbursedPrincipal - totalRepaidPrincipal;
+    const pool                     = totalSavingsPrincipal + totalSocialFund + totalMembershipFees;
+    const unborrowed               = Math.max(0, pool - netCashLentOut);
+    const interestRate             = parseFloat(cycleConfig.interestRate || cycleConfig.commonInterestRate || cycleConfig.savingsInterestRate || 0.15);
 
     const stats = {
       totalMembers:           parseInt(s.total_members, 10),
@@ -83,7 +102,11 @@ async function getDashboardData(cycleId, month) {
       totalSavingsPrincipal,
       totalAccumulatedSavings: parseFloat(s.total_accumulated_savings),
       totalOutstandingLoans,
-      totalCumulativeBorrowing: parseFloat(s.total_cumulative_borrowing),
+      totalCumulativeBorrowing,
+      totalDisbursedPrincipal,
+      totalRepaidPrincipal,
+      netCashLentOut,
+      pool,
       totalCommonInterestDue:   parseFloat(s.total_common_interest_due),
       totalPenaltiesDue:        parseFloat(penaltiesResult.rows[0].total_unpaid_penalties),
       totalSocialFund,
@@ -128,9 +151,9 @@ async function getDashboardData(cycleId, month) {
     // ── 4. Declaration counts ─────────────────────────────────────────────
     const declCountResult = await client.query(
       `SELECT
-         COUNT(*) FILTER (WHERE status IN ('submitted','approved','processed')) AS submitted,
-         COUNT(*) FILTER (WHERE status IN ('approved','processed'))             AS processed,
-         COUNT(*) FILTER (WHERE status = 'pending')                             AS pending
+         COUNT(DISTINCT member_id) FILTER (WHERE status IN ('submitted','approved','processed')) AS submitted,
+         COUNT(DISTINCT member_id) FILTER (WHERE status IN ('approved','processed'))             AS processed,
+         COUNT(*)                  FILTER (WHERE status = 'pending')                             AS pending
        FROM declarations
        WHERE cycle_id = $1 AND month = $2`,
       [cycleId, resolvedMonth]
@@ -140,7 +163,7 @@ async function getDashboardData(cycleId, month) {
       submitted: parseInt(dc.submitted, 10),
       processed: parseInt(dc.processed, 10),
       pending:   parseInt(dc.pending,   10),
-      missing:   stats.totalMembers - parseInt(dc.submitted, 10),
+      missing:   Math.max(0, stats.totalMembers - parseInt(dc.submitted, 10)),
     };
 
     // ── 5. Recent loans (3) ───────────────────────────────────────────────
@@ -191,7 +214,7 @@ async function getDashboardData(cycleId, month) {
         status:       cycle.status,
         memberCount:  cycle.member_count,
         interestRate,
-        minimumBorrowingAmount: parseFloat(cycleConfig.minimumBorrowingAmount || 20000),
+        minimumBorrowingAmount: parseFloat(cycleConfig.minimumBorrowingAmount || cycleConfig.minBorrowing || 20000),
         socialFundAmount:       socialFundPerMember,
         membershipFee:          membershipFeePerMember,
       },

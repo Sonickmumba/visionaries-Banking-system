@@ -21,6 +21,7 @@ import {
   Clock,
   FileText,
   DollarSign,
+  TrendingUp,
   CreditCard,
   User,
   RefreshCw,
@@ -31,15 +32,18 @@ import {
   useGetApprovalsQuery,
   useApproveSavingsDeclarationMutation,
   useRejectSavingsDeclarationMutation,
+  useApproveLoanRequestMutation,
+  useRejectLoanRequestMutation,
   useApproveLoanRepaymentMutation,
   useRejectLoanRepaymentMutation,
 } from '../store/api';
 
 // Map UI tab values to the API type parameter
 const TAB_TO_TYPE = {
-  all:        undefined,
-  savings:    'savings_declaration',
-  repayments: 'loan_repayment',
+  all:           undefined,
+  savings:       'savings_declaration',
+  loan_requests: 'loan_request',
+  repayments:    'loan_repayment',
 };
 
 function formatTimeAgo(dateString) {
@@ -84,26 +88,26 @@ function StatusBadge({ status }) {
 }
 
 function ApprovalCard({ approval, onView }) {
-  const isSavings = approval.approval_type === 'savings_declaration';
+  const isRepayment  = approval.approval_type === 'loan_repayment';
+
+  const typeConfig = {
+    savings_declaration: { icon: DollarSign,  bg: 'bg-blue-100',   colour: 'text-blue-600',   label: 'Savings Deposit' },
+    loan_request:        { icon: TrendingUp,  bg: 'bg-purple-100', colour: 'text-purple-600', label: 'Loan Request' },
+    loan_repayment:      { icon: CreditCard,  bg: 'bg-green-100',  colour: 'text-green-600',  label: 'Loan Repayment' },
+  };
+  const tc = typeConfig[approval.approval_type] || typeConfig.loan_repayment;
+  const Icon = tc.icon;
   return (
     <Card className="p-4 md:p-6 hover:shadow-md transition-shadow">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div className="flex-1 space-y-3">
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-3">
-              <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
-                  isSavings ? 'bg-blue-100' : 'bg-green-100'
-                }`}
-              >
-                {isSavings
-                  ? <DollarSign className="w-5 h-5 text-blue-600" />
-                  : <CreditCard className="w-5 h-5 text-green-600" />}
+              <div className={'w-10 h-10 rounded-full flex items-center justify-center shrink-0 ' + tc.bg}>
+                <Icon className={'w-5 h-5 ' + tc.colour} />
               </div>
               <div>
-                <h3 className="font-semibold text-gray-900">
-                  {isSavings ? 'Savings Declaration' : 'Loan Repayment'}
-                </h3>
+                <h3 className="font-semibold text-gray-900">{tc.label}</h3>
                 <div className="flex items-center gap-1 text-sm text-gray-500 mt-0.5">
                   <User className="w-3.5 h-3.5" />
                   <span>{approval.member_name}</span>
@@ -122,7 +126,7 @@ function ApprovalCard({ approval, onView }) {
               <p className="text-gray-500">Submitted</p>
               <p className="font-medium">{formatTimeAgo(approval.submitted_at)}</p>
             </div>
-            {!isSavings && approval.details?.reference_number && (
+            {isRepayment && approval.details?.reference_number && (
               <div>
                 <p className="text-gray-500">Reference</p>
                 <p className="font-medium font-mono text-xs">{approval.details.reference_number}</p>
@@ -165,22 +169,25 @@ export default function ApprovalsPage() {
   );
 
   // ── Mutations ────────────────────────────────────────────────────────────
-  const [approveSavings, { isLoading: approvingSavings }] = useApproveSavingsDeclarationMutation();
-  const [rejectSavings,  { isLoading: rejectingSavings }] = useRejectSavingsDeclarationMutation();
-  const [approveLoan,    { isLoading: approvingLoan }]    = useApproveLoanRepaymentMutation();
-  const [rejectLoan,     { isLoading: rejectingLoan }]    = useRejectLoanRepaymentMutation();
+  const [approveSavings,  { isLoading: approvingSavings }]  = useApproveSavingsDeclarationMutation();
+  const [rejectSavings,   { isLoading: rejectingSavings }]  = useRejectSavingsDeclarationMutation();
+  const [approveLoanReq,  { isLoading: approvingLoanReq }]  = useApproveLoanRequestMutation();
+  const [rejectLoanReq,   { isLoading: rejectingLoanReq }]  = useRejectLoanRequestMutation();
+  const [approveLoan,     { isLoading: approvingLoan }]      = useApproveLoanRepaymentMutation();
+  const [rejectLoan,      { isLoading: rejectingLoan }]      = useRejectLoanRepaymentMutation();
 
-  const isActionLoading = approvingSavings || rejectingSavings || approvingLoan || rejectingLoan;
+  const isActionLoading = approvingSavings || rejectingSavings || approvingLoanReq || rejectingLoanReq || approvingLoan || rejectingLoan;
 
   // ── Derived stats ────────────────────────────────────────────────────────
-  const pendingSavings = stats.pending_savings    ?? 0;
-  const pendingRepay   = stats.pending_repayments ?? 0;
-  const pendingTotal   = pendingSavings + pendingRepay;
+  const pendingSavings  = stats.pending_savings       ?? 0;
+  const pendingLoanReqs = stats.pending_loan_requests ?? 0;
+  const pendingRepay    = stats.pending_repayments    ?? 0;
+  const pendingTotal    = pendingSavings + pendingLoanReqs + pendingRepay;
 
   function tabLabel(tab) {
-    const labels = { all: 'All', savings: 'Savings', repayments: 'Repayments' };
+    const labels = { all: 'All', savings: 'Savings', loan_requests: 'Loan Requests', repayments: 'Repayments' };
     if (statusFilter !== 'pending') return labels[tab];
-    const counts = { all: pendingTotal, savings: pendingSavings, repayments: pendingRepay };
+    const counts = { all: pendingTotal, savings: pendingSavings, loan_requests: pendingLoanReqs, repayments: pendingRepay };
     return `${labels[tab]} (${counts[tab]})`;
   }
 
@@ -189,6 +196,8 @@ export default function ApprovalsPage() {
     try {
       if (approval.approval_type === 'savings_declaration') {
         await approveSavings(approval.id).unwrap();
+      } else if (approval.approval_type === 'loan_request') {
+        await approveLoanReq(approval.id).unwrap();
       } else {
         await approveLoan(approval.id).unwrap();
       }
@@ -207,6 +216,8 @@ export default function ApprovalsPage() {
     try {
       if (approval.approval_type === 'savings_declaration') {
         await rejectSavings({ approvalId: approval.id, reason: rejectionReason }).unwrap();
+      } else if (approval.approval_type === 'loan_request') {
+        await rejectLoanReq({ approvalId: approval.id, reason: rejectionReason }).unwrap();
       } else {
         await rejectLoan({ approvalId: approval.id, reason: rejectionReason }).unwrap();
       }
@@ -277,6 +288,17 @@ export default function ApprovalsPage() {
         <Card className="p-4">
           <div className="flex items-center justify-between">
             <div>
+              <p className="text-sm text-gray-600">Pending Loan Requests</p>
+              <p className="text-2xl font-bold mt-1">{pendingLoanReqs}</p>
+            </div>
+            <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
+              <TrendingUp className="w-6 h-6 text-purple-600" />
+            </div>
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="flex items-center justify-between">
+            <div>
               <p className="text-sm text-gray-600">Pending Repayments</p>
               <p className="text-2xl font-bold mt-1">{pendingRepay}</p>
             </div>
@@ -316,7 +338,7 @@ export default function ApprovalsPage() {
       {/* ── Tabs + list ──────────────────────────────────────────────────── */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
-          {['all', 'savings', 'repayments'].map((tab) => (
+          {['all', 'savings', 'loan_requests', 'repayments'].map((tab) => (
             <TabsTrigger key={tab} value={tab}>
               {tabLabel(tab)}
             </TabsTrigger>
@@ -352,17 +374,25 @@ export default function ApprovalsPage() {
       <Dialog open={!!selectedApproval} onOpenChange={() => setSelectedApproval(null)}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           {selectedApproval && (() => {
-            const a       = selectedApproval;
-            const isSav   = a.approval_type === 'savings_declaration';
-            const details = a.details ?? {};
+            const a        = selectedApproval;
+            const isLoanRq = a.approval_type === 'loan_request';
+            const isRepay  = a.approval_type === 'loan_repayment';
+            const details  = a.details ?? {};
+
+            const typeConfig = {
+              savings_declaration: { icon: DollarSign,  colour: 'text-blue-600',   label: 'Savings Deposit' },
+              loan_request:        { icon: TrendingUp,  colour: 'text-purple-600', label: 'Loan Request' },
+              loan_repayment:      { icon: CreditCard,  colour: 'text-green-600',  label: 'Loan Repayment' },
+            };
+            const tc = typeConfig[a.approval_type] || typeConfig.loan_repayment;
+            const TcIcon = tc.icon;
+
             return (
               <>
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
-                    {isSav
-                      ? <DollarSign className="w-5 h-5 text-blue-600" />
-                      : <CreditCard className="w-5 h-5 text-green-600" />}
-                    {isSav ? 'Savings Declaration' : 'Loan Repayment'}
+                    <TcIcon className={'w-5 h-5 ' + tc.colour} />
+                    {tc.label}
                   </DialogTitle>
                   <DialogDescription>
                     Review the details before approving or rejecting
@@ -393,10 +423,16 @@ export default function ApprovalsPage() {
                         <span className="text-gray-500">Submitted: </span>
                         <span className="font-medium">{new Date(a.submitted_at).toLocaleString()}</span>
                       </div>
-                      {isSav && details.month && (
+                      {details.month && (
                         <div><span className="text-gray-500">Month: </span><span className="font-medium">{details.month}</span></div>
                       )}
-                      {!isSav && (
+                      {isLoanRq && (
+                        <div>
+                          <span className="text-gray-500">Requested Amount: </span>
+                          <span className="font-semibold">{formatCurrency(details.loan_request ?? a.amount)}</span>
+                        </div>
+                      )}
+                      {isRepay && (
                         <>
                           <div><span className="text-gray-500">Reference: </span><span className="font-medium font-mono text-xs">{details.reference_number ?? '—'}</span></div>
                           <div>

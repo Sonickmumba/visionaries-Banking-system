@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import toast from 'react-hot-toast';
 import {
@@ -11,6 +11,9 @@ import {
   XCircle,
   Download,
   Users,
+  DollarSign,
+  TrendingUp,
+  CreditCard,
 } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -32,6 +35,7 @@ import {
   useSubmitDeclarationMutation,
   useGetMembersQuery,
   useGetPenaltiesQuery,
+  useGetLoansQuery,
 } from '../store/api';
 
 // --- Helpers ----------------------------------------------------------------
@@ -41,6 +45,15 @@ function fmt(amount) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function ApprovalHint({ text }) {
+  return (
+    <p className="flex items-center gap-1 text-xs text-amber-700 mt-1">
+      <Clock className="w-3 h-3 shrink-0" />
+      {text}
+    </p>
+  );
 }
 
 function StatusBadge({ status }) {
@@ -78,24 +91,75 @@ function exportCSV(rows, filename) {
 
 // --- Submit Declaration Modal -----------------------------------------------
 
-function SubmitDeclarationModal({ cycleId, members, onClose }) {
+function SubmitDeclarationModal({ cycleId, members, declarations, onClose }) {
   const [form, setForm] = useState({
-    member_id: '',
-    savings_amount: '',
-    loan_request: '',
+    member_id:           '',
+    savings_amount:      '',
+    loan_request:        '',
     principal_repayment: '',
-    interest_repayment: '',
+    interest_repayment:  '',
+    loan_id:             '',
+    payment_method:      'cash',
   });
+
   const [submitDeclaration, { isLoading }] = useSubmitDeclarationMutation();
+
+  // ── Derive per-member constraints from already-fetched declarations ───────────────
+  const memberDeclsThisMonth = form.member_id
+    ? declarations.filter((d) => String(d.member_id) === String(form.member_id))
+    : [];
+
+  // Savings: once per member per month
+  const alreadySaved = memberDeclsThisMonth.some((d) => parseFloat(d.savings_amount) > 0);
+
+  // Loan request: no stacking open (pending/approved) requests in this cycle
+  const hasOpenLoanRequest = memberDeclsThisMonth.some(
+    (d) => parseFloat(d.loan_request) > 0 && ['pending', 'approved'].includes(d.status)
+  );
+
+  // Fetch active loans for the selected member so they can pick which loan to repay
+  const hasRepayment = parseFloat(form.principal_repayment) > 0 || parseFloat(form.interest_repayment) > 0;
+  const { data: memberLoans = [] } = useGetLoansQuery(
+    { cycleId, member_id: form.member_id || undefined, status: 'disbursed' },
+    { skip: !cycleId || !form.member_id || !hasRepayment }
+  );
+
+  // Compute which approvals will be generated (for user feedback)
+  const willApprove = useMemo(() => {
+    const items = [];
+    if (!alreadySaved && parseFloat(form.savings_amount)      > 0) items.push({ icon: DollarSign,  label: 'Savings deposit',  colour: 'text-blue-600' });
+    if (!hasOpenLoanRequest && parseFloat(form.loan_request)  > 0) items.push({ icon: TrendingUp,  label: 'Loan request',     colour: 'text-purple-600' });
+    if (parseFloat(form.principal_repayment) > 0 || parseFloat(form.interest_repayment) > 0)
+      items.push({ icon: CreditCard, label: 'Loan repayment', colour: 'text-green-600' });
+    return items;
+  }, [form.savings_amount, form.loan_request, form.principal_repayment, form.interest_repayment, alreadySaved, hasOpenLoanRequest]);
 
   function handleChange(e) {
     const { name, value } = e.target;
+    // Reset all amounts when member changes so constraints are cleanly re-evaluated
+    if (name === 'member_id') {
+      setForm({
+        member_id:           value,
+        savings_amount:      '',
+        loan_request:        '',
+        principal_repayment: '',
+        interest_repayment:  '',
+        loan_id:             '',
+        payment_method:      'cash',
+      });
+      return;
+    }
     setForm((prev) => ({ ...prev, [name]: value }));
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
     if (!form.member_id) { toast.error('Please select a member'); return; }
+    if (hasRepayment && !form.loan_id) {
+      toast.error('Please select the loan you are repaying');
+      return;
+    }
+
     const payload = {
       member_id:           parseInt(form.member_id, 10),
       cycle_id:            cycleId,
@@ -103,12 +167,16 @@ function SubmitDeclarationModal({ cycleId, members, onClose }) {
       loan_request:        parseFloat(form.loan_request)        || 0,
       principal_repayment: parseFloat(form.principal_repayment) || 0,
       interest_repayment:  parseFloat(form.interest_repayment)  || 0,
+      ...(hasRepayment && form.loan_id && { loan_id: parseInt(form.loan_id, 10) }),
+      ...(hasRepayment && { payment_method: form.payment_method }),
     };
+
     try {
       const result = await submitDeclaration(payload).unwrap();
+      const approvalCount = willApprove.length;
       const isPending = result.declaration && result.declaration.status === 'pending';
       toast.success(isPending
-        ? 'Declaration submitted — pending admin approval'
+        ? `Declaration submitted — ${approvalCount} item${approvalCount > 1 ? 's' : ''} pending admin approval`
         : 'Declaration submitted successfully');
       onClose();
     } catch (err) {
@@ -116,26 +184,33 @@ function SubmitDeclarationModal({ cycleId, members, onClose }) {
     }
   }
 
+  const inputCls = 'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent';
+
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Submit Monthly Declaration</DialogTitle>
           <DialogDescription>
-            Declarations with savings amounts are held for admin approval before funds are committed.
+            Fill in any combination of items. Each non-zero item creates a separate approval
+            request for the admin.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4 py-2">
+
+        <form onSubmit={handleSubmit} className="space-y-5 py-2">
+          {/* Window banner */}
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
             <strong>Declaration Window:</strong> 28th of current month to 3rd of next month.
             Submissions outside this window are accepted but flagged.
           </div>
+
+          {/* Member */}
           <div className="space-y-1">
             <Label htmlFor="member_id">Member *</Label>
             <select
               id="member_id" name="member_id" required
               value={form.member_id} onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+              className={inputCls}
             >
               <option value="">Choose a member...</option>
               {members.map((m) => (
@@ -143,44 +218,161 @@ function SubmitDeclarationModal({ cycleId, members, onClose }) {
               ))}
             </select>
           </div>
-          <div className="space-y-1">
-            <Label htmlFor="savings_amount">Savings Amount (K)</Label>
-            <input
-              id="savings_amount" type="number" name="savings_amount" min="0" step="0.01"
-              value={form.savings_amount} onChange={handleChange} placeholder="0.00"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-xs text-gray-500">Will require admin approval before being committed to savings.</p>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="loan_request">Loan Request Amount (K)</Label>
-            <input
-              id="loan_request" type="number" name="loan_request" min="0" step="0.01"
-              value={form.loan_request} onChange={handleChange} placeholder="0.00"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <Label htmlFor="principal_repayment">Principal Repayment (K)</Label>
-              <input
-                id="principal_repayment" type="number" name="principal_repayment" min="0" step="0.01"
-                value={form.principal_repayment} onChange={handleChange} placeholder="0.00"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              />
+
+          {/* ── Section 1: Savings ───────────────────────────────────────── */}
+          <div className={`border rounded-xl p-4 space-y-3 ${alreadySaved ? 'border-gray-200 bg-gray-50 opacity-70' : 'border-gray-200'}`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <DollarSign className={`w-4 h-4 ${alreadySaved ? 'text-gray-400' : 'text-blue-600'}`} />
+                <h4 className="text-sm font-semibold text-gray-800">Savings Deposit</h4>
+              </div>
+              {alreadySaved && (
+                <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
+                  <CheckCircle2 className="w-3 h-3" /> Saved this month
+                </span>
+              )}
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="interest_repayment">Interest Repayment (K)</Label>
-              <input
-                id="interest_repayment" type="number" name="interest_repayment" min="0" step="0.01"
-                value={form.interest_repayment} onChange={handleChange} placeholder="0.00"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+            {alreadySaved ? (
+              <p className="text-sm text-gray-500">
+                This member has already submitted a savings deposit this month.
+                Only one savings entry is allowed per month.
+              </p>
+            ) : (
+              <div className="space-y-1">
+                <Label htmlFor="savings_amount">Amount (K)</Label>
+                <input
+                  id="savings_amount" type="number" name="savings_amount" min="0" step="0.01"
+                  value={form.savings_amount} onChange={handleChange} placeholder="0.00"
+                  className={inputCls}
+                />
+                {parseFloat(form.savings_amount) > 0 && (
+                  <ApprovalHint text="Will create a savings deposit approval" />
+                )}
+              </div>
+            )}
           </div>
+
+          {/* ── Section 2: Loan Request ──────────────────────────────────── */}
+          <div className={`border rounded-xl p-4 space-y-3 ${hasOpenLoanRequest ? 'border-gray-200 bg-gray-50 opacity-70' : 'border-gray-200'}`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TrendingUp className={`w-4 h-4 ${hasOpenLoanRequest ? 'text-gray-400' : 'text-purple-600'}`} />
+                <h4 className="text-sm font-semibold text-gray-800">Loan Request</h4>
+              </div>
+              <span className="text-xs text-gray-400">Any time this cycle</span>
+            </div>
+            {hasOpenLoanRequest ? (
+              <p className="text-sm text-gray-500">
+                This member already has a pending or approved loan request this cycle.
+                It must be resolved before a new one can be submitted.
+              </p>
+            ) : (
+              <div className="space-y-1">
+                <Label htmlFor="loan_request">Amount Requested (K)</Label>
+                <input
+                  id="loan_request" type="number" name="loan_request" min="0" step="0.01"
+                  value={form.loan_request} onChange={handleChange} placeholder="0.00"
+                  className={inputCls}
+                />
+                {parseFloat(form.loan_request) > 0 && (
+                  <ApprovalHint text="Will create a loan request approval — loan is disbursed after admin approves" />
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ── Section 3: Loan Repayment ────────────────────────────────── */}
+          <div className="border border-gray-200 rounded-xl p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <CreditCard className="w-4 h-4 text-green-600" />
+              <h4 className="text-sm font-semibold text-gray-800">Loan Repayment</h4>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <Label htmlFor="principal_repayment">Principal (K)</Label>
+                <input
+                  id="principal_repayment" type="number" name="principal_repayment" min="0" step="0.01"
+                  value={form.principal_repayment} onChange={handleChange} placeholder="0.00"
+                  className={inputCls}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="interest_repayment">Interest (K)</Label>
+                <input
+                  id="interest_repayment" type="number" name="interest_repayment" min="0" step="0.01"
+                  value={form.interest_repayment} onChange={handleChange} placeholder="0.00"
+                  className={inputCls}
+                />
+              </div>
+            </div>
+
+            {/* Loan selector — only shown when repayment is entered */}
+            {hasRepayment && (
+              <div className="space-y-1">
+                <Label htmlFor="loan_id">Loan Being Repaid *</Label>
+                {memberLoans.length === 0 ? (
+                  <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    No active loans found for this member.
+                  </p>
+                ) : (
+                  <select
+                    id="loan_id" name="loan_id" required={hasRepayment}
+                    value={form.loan_id} onChange={handleChange}
+                    className={inputCls}
+                  >
+                    <option value="">Select a loan...</option>
+                    {memberLoans.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.loanType} loan — {fmt(l.amount)} — Balance: {fmt(l.outstandingBalance)}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
+
+            {/* Payment method */}
+            {hasRepayment && (
+              <div className="space-y-1">
+                <Label htmlFor="payment_method">Payment Method</Label>
+                <select
+                  id="payment_method" name="payment_method"
+                  value={form.payment_method} onChange={handleChange}
+                  className={inputCls}
+                >
+                  <option value="cash">Cash</option>
+                  <option value="mobile_money">Mobile Money</option>
+                  <option value="bank_transfer">Bank Transfer</option>
+                </select>
+              </div>
+            )}
+
+            {hasRepayment && (
+              <ApprovalHint text="Will create a loan repayment approval — balance is reduced after admin approves" />
+            )}
+          </div>
+
+          {/* Summary of what will go to approval */}
+          {willApprove.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+              <p className="text-xs font-semibold text-amber-800 mb-2">
+                {willApprove.length} approval request{willApprove.length > 1 ? 's' : ''} will be created:
+              </p>
+              <ul className="space-y-1">
+                {willApprove.map((item, i) => (
+                  <li key={i} className="flex items-center gap-2 text-xs text-amber-700">
+                    <item.icon className={'w-3.5 h-3.5 ' + item.colour} />
+                    {item.label}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={isLoading}>
+            <Button type="submit" disabled={isLoading || (hasRepayment && !form.loan_id && memberLoans.length > 0)}>
               {isLoading ? 'Submitting...' : 'Submit Declaration'}
             </Button>
           </DialogFooter>
@@ -527,7 +719,9 @@ export function DeclarationsPage() {
       {showModal && (
         <SubmitDeclarationModal
           cycleId={cycleId}
+          currentMonth={currentMonth}
           members={members}
+          declarations={declarations}
           onClose={() => setShowModal(false)}
         />
       )}

@@ -14,7 +14,7 @@ async function processMonthEnd(cycleId) {
     const cycle        = cycleResult.rows[0];
     const currentMonth = cycle.current_month;
     const nextMonth    = currentMonth + 1;
-    const interestRate = cycle.config.interestRate || 0.15;
+    const interestRate = cycle.config.interestRate || cycle.config.commonInterestRate || cycle.config.savingsInterestRate || 0.15;
 
     const startDate = new Date(cycle.start_date);
     const endDate   = new Date(cycle.end_date);
@@ -85,19 +85,21 @@ async function processMonthEnd(cycleId) {
            savings_principal, accumulated_savings,
            outstanding_loan, cumulative_borrowing,
            common_interest_due, penalties_due,
-           social_fund_paid, membership_fee_paid
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           social_fund_paid, membership_fee_paid,
+           compliance_status
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          ON CONFLICT (member_id, cycle_id, month) DO NOTHING`,
         [
           memberId, cycleId, nextMonth,
           currentBalance.savings_principal     || 0,
           newAccumulatedSavings,
-          currentBalance.outstanding_loan      || 0, // principal net of repayments — no accrued interest
+          totalNewOutstanding,   // sum of all active loans compounded; 0 if no active loans
           currentBalance.cumulative_borrowing  || 0,
           currentBalance.common_interest_due   || 0, // carry forward — member still owes this next month
           0,                                         // penalties_due reset — fresh each month
           currentBalance.social_fund_paid      || false,
-          currentBalance.membership_fee_paid   || false
+          currentBalance.membership_fee_paid   || false,
+          currentBalance.compliance_status     || 'never_borrowed'
         ]
       );
 
@@ -170,7 +172,7 @@ async function getMonthEndSummary(cycleId, month) {
     );
     const summary = summaryResult.rows[0];
 
-    const interestRate          = cycle.config.interestRate || 0.15;
+    const interestRate          = cycle.config.interestRate || cycle.config.commonInterestRate || cycle.config.savingsInterestRate || 0.15;
     const savingsInterestToApply = parseFloat(summary.total_accumulated_savings) * interestRate;
 
     const declarationResult = await client.query(

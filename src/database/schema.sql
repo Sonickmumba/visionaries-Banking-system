@@ -146,8 +146,10 @@ CREATE TABLE IF NOT EXISTS declarations (
     rejection_reason TEXT,
     status VARCHAR(50) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'submitted', 'processed')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(member_id, cycle_id, month)
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    -- No unique constraint on (member_id, cycle_id, month): a member may submit multiple
+    -- declaration events per month (loan repayments, loan requests). Uniqueness is enforced
+    -- in application code per type: savings once per month, one open loan request per cycle.
 );
 
 

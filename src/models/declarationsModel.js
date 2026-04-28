@@ -69,8 +69,15 @@ async function submitDeclaration(declarationData) {
     principal_repayment  = 0,
     interest_repayment   = 0,
     payment_proof_id     = null,
+    loan_id              = null,   // required when principal_repayment > 0
+    payment_method       = 'cash', // for loan repayment: 'cash' | 'mobile_money' | 'bank_transfer'
     user_id
   } = declarationData;
+
+  const savingsAmt    = parseFloat(savings_amount)      || 0;
+  const loanReqAmt    = parseFloat(loan_request)        || 0;
+  const principalAmt  = parseFloat(principal_repayment) || 0;
+  const interestAmt   = parseFloat(interest_repayment)  || 0;
 
   const client = await db.pool.connect();
   try {
@@ -85,18 +92,43 @@ async function submitDeclaration(declarationData) {
     const currentMonth = cycleResult.rows[0].current_month;
     const config       = cycleResult.rows[0].config;
 
-    if (!validateDeclarationWindow(new Date(), config)) {
-      console.warn(`Declaration submitted outside window by member ${member_id}`);
+    // Window check applies only to savings deposits and loan repayments.
+    // Loan requests are allowed at any time during the cycle.
+    const hasWindowBoundItems = savingsAmt > 0 || (principalAmt + interestAmt) > 0;
+    if (hasWindowBoundItems && !validateDeclarationWindow(new Date(), config)) {
+      console.warn(`Savings/repayment submitted outside declaration window by member ${member_id}`);
     }
 
-    const existingResult = await client.query(
-      'SELECT id FROM declarations WHERE member_id = $1 AND cycle_id = $2 AND month = $3',
-      [member_id, cycle_id, currentMonth]
-    );
-    if (existingResult.rows[0]) throw new Error('Declaration already submitted for this month');
+    // ── Per-type uniqueness rules ────────────────────────────────────────
+    // Rule 1: savings — once per member per month
+    if (savingsAmt > 0) {
+      const savingsCheck = await client.query(
+        `SELECT id FROM declarations
+         WHERE member_id = $1 AND cycle_id = $2 AND month = $3 AND savings_amount > 0`,
+        [member_id, cycle_id, currentMonth]
+      );
+      if (savingsCheck.rows[0]) {
+        throw new Error('Savings already submitted for this month');
+      }
+    }
 
-    // Always require approval when savings are declared (payment_proof_id is optional but encouraged)
-    const needsApproval = savings_amount > 0;
+    // Rule 2: loan request — only one open (pending or approved) request per cycle
+    if (loanReqAmt > 0) {
+      const loanReqCheck = await client.query(
+        `SELECT id FROM declarations
+         WHERE member_id = $1 AND cycle_id = $2
+           AND loan_request > 0
+           AND status IN ('pending', 'approved')`,
+        [member_id, cycle_id]
+      );
+      if (loanReqCheck.rows[0]) {
+        throw new Error('A loan request is already pending or approved for this cycle');
+      }
+    }
+
+    // Any non-zero item requires approval
+    const needsApproval =
+      savingsAmt > 0 || loanReqAmt > 0 || (principalAmt + interestAmt) > 0;
     const status = needsApproval ? 'pending' : 'submitted';
 
     const declarationResult = await client.query(
@@ -107,20 +139,57 @@ async function submitDeclaration(declarationData) {
        ) VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8, $9)
        RETURNING id, member_id, cycle_id, month, submitted_at, savings_amount,
                  loan_request, principal_repayment, interest_repayment, payment_proof_id, status`,
-      [member_id, cycle_id, currentMonth, savings_amount, loan_request,
-       principal_repayment, interest_repayment, payment_proof_id, status]
+      [member_id, cycle_id, currentMonth, savingsAmt, loanReqAmt,
+       principalAmt, interestAmt, payment_proof_id, status]
     );
 
     const declaration = declarationResult.rows[0];
 
-    if (needsApproval) {
-      await approvalsModel.createApproval(
-        'savings_declaration',
-        declaration.id,
-        member_id,
-        cycle_id,
-        savings_amount,
-        user_id
+    // ── 1. Savings deposit approval ──────────────────────────────────────
+    if (savingsAmt > 0) {
+      await approvalsModel.createApprovalWithClient(
+        client, 'savings_declaration', declaration.id,
+        member_id, cycle_id, savingsAmt, user_id
+      );
+    }
+
+    // ── 2. Loan request approval ─────────────────────────────────────────
+    if (loanReqAmt > 0) {
+      await approvalsModel.createApprovalWithClient(
+        client, 'loan_request', declaration.id,
+        member_id, cycle_id, loanReqAmt, user_id
+      );
+    }
+
+    // ── 3. Loan repayment approval ───────────────────────────────────────
+    if ((principalAmt + interestAmt) > 0) {
+      if (!loan_id) {
+        throw new Error('loan_id is required when submitting a repayment');
+      }
+
+      // Verify the loan belongs to this member
+      const loanCheck = await client.query(
+        'SELECT id FROM loans WHERE id = $1 AND member_id = $2 AND cycle_id = $3',
+        [loan_id, member_id, cycle_id]
+      );
+      if (!loanCheck.rows[0]) throw new Error('Loan not found or does not belong to this member');
+
+      // Generate unique reference
+      const refNumber = `DECL-${member_id}-M${currentMonth}-${Date.now()}`;
+
+      const repaymentResult = await client.query(
+        `INSERT INTO loan_repayments
+           (loan_id, member_id, cycle_id, amount, reference_number, payment_method,
+            payment_proof_id, status, submitted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW())
+         RETURNING id`,
+        [loan_id, member_id, cycle_id, principalAmt, refNumber,
+         payment_method, payment_proof_id || null]
+      );
+
+      await approvalsModel.createApprovalWithClient(
+        client, 'loan_repayment', repaymentResult.rows[0].id,
+        member_id, cycle_id, principalAmt + interestAmt, user_id
       );
     }
 
@@ -150,6 +219,7 @@ async function getDeclarationStats(cycleId, month) {
   const stats = await db.query(
     `SELECT
        COUNT(*)                                          AS total_declarations,
+       COUNT(DISTINCT member_id)                         AS members_submitted,
        COUNT(CASE WHEN status = 'pending'   THEN 1 END) AS pending,
        COUNT(CASE WHEN status = 'approved'  THEN 1 END) AS approved,
        COUNT(CASE WHEN status = 'submitted' THEN 1 END) AS submitted,
@@ -170,12 +240,12 @@ async function getDeclarationStats(cycleId, month) {
   );
 
   const totalMembers      = parseInt(memberCountResult.rows[0].total_members, 10);
-  const totalDeclarations = parseInt(stats.rows[0].total_declarations, 10);
+  const membersSubmitted  = parseInt(stats.rows[0].members_submitted, 10);
 
   return {
     ...stats.rows[0],
     total_members: totalMembers,
-    missing_declarations: totalMembers - totalDeclarations
+    missing_declarations: totalMembers - membersSubmitted
   };
 }
 
