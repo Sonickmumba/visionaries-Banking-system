@@ -123,7 +123,7 @@ const isOwnerOrAdmin = async (req, res, next) => {
   if (
     req.user.role === ROLES.SUPER_ADMIN ||
     req.user.role === ROLES.ADMIN ||
-    req.user.id === resourceUserId
+    req.user.id === parseInt(resourceUserId, 10)
   ) {
     return next();
   }

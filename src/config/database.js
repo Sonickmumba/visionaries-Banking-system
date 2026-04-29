@@ -13,9 +13,13 @@ const pool = new Pool({
 });
 
 // Test database connection
-pool.on('connect', () => {
-  console.log('✅ Database connected successfully');
-});
+pool.query('SELECT 1')  
+  .then(() => {  
+    console.log('✅ Database connected successfully');  
+  })  
+  .catch((err) => {  
+    console.error('❌ Database connection test failed:', err);  
+  });
 
 pool.on('error', (err) => {
   console.error('❌ Unexpected database error:', err);

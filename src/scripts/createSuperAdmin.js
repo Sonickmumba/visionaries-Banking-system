@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const db = require('../config/database');
 const { ROLES } = require('../config/constants');
+require('dotenv').config()
 
 const normalizeEmail = (email) => (email || '').trim().toLowerCase();
 

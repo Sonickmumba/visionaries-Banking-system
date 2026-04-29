@@ -7,7 +7,9 @@ const {
   assessFailureToDeclarePenalties: assessFailureToDeclarePenaltiesModel
 } = require('../models/penaltiesModel');
 
-const VALID_PENALTY_STATUSES = ['pending', 'paid', 'waived'];
+// const VALID_PENALTY_STATUSES = ['pending', 'paid', 'waived'];
+const VALID_PENALTY_STATUSES = ['assessed', 'paid', 'waived', 'converted_to_loan'];  
+
 const VALID_PENALTY_TYPES    = ['failure_to_declare', 'late_payment', 'other'];
 
 const PENALTY_ERRORS = {

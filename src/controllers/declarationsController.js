@@ -8,7 +8,8 @@ const {
   getMembersWithoutDeclaration
 } = require('../models/declarationsModel');
 
-const VALID_STATUSES = ['pending', 'approved', 'rejected'];
+// const VALID_STATUSES = ['pending', 'approved', 'rejected'];
+const VALID_STATUSES = ['pending', 'submitted', 'processed', 'approved', 'rejected'];
 
 function parseCycleMonth(query, res) {
   const cycleId = parseInt(query.cycleId, 10);

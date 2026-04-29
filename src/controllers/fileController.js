@@ -24,7 +24,7 @@ async function uploadFile(req, res, next) {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
     const { filename, mimetype, size, path: filePath } = req.file;
-    const userId = req.user.userId;
+    const userId = req.user.id;
 
     const fileMetadata = await saveFileMetadata(filename, filePath, mimetype, size, userId);
 
@@ -106,7 +106,7 @@ async function deleteFileHandler(req, res, next) {
     if (!file) return res.status(404).json({ error: 'File not found' });
 
     const isAdmin    = ADMIN_ROLES.includes(req.user.role);
-    const isOwner    = file.uploaded_by === req.user.userId;
+    const isOwner    = file.uploaded_by === req.user.id;
     if (!isOwner && !isAdmin) {
       return res.status(403).json({ error: 'Unauthorized to delete this file' });
     }
@@ -121,7 +121,7 @@ async function deleteFileHandler(req, res, next) {
 // GET /api/files/my-files
 async function getMyFiles(req, res, next) {
   try {
-    const userId = req.user.userId;
+    const userId = req.user.id;
 
     const parsedLimit  = req.query.limit  ? parseInt(req.query.limit, 10)  : 50;
     const parsedOffset = req.query.offset ? parseInt(req.query.offset, 10) : 0;

@@ -53,7 +53,7 @@ async function createRepaymentHandler(req, res, next) {
     }
 
     const repayment = await createRepayment(
-      loanId, parsedAmount, paymentMethod, paymentProofId, referenceNumber, req.user.userId
+      loanId, parsedAmount, paymentMethod, paymentProofId, referenceNumber, req.user.id
     );
 
     res.status(201).json({ message: 'Loan repayment submitted for approval', repayment });
