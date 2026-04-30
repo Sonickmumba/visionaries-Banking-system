@@ -76,9 +76,17 @@ async function createApprovalWithClient(client, approvalType, entityId, memberId
  *   - some pending  → declaration = 'pending'
  */
 async function syncDeclarationStatus(client, declarationId, reviewerId) {
+  // Collect statuses from ALL approval types linked to this declaration:
+  //   savings_declaration / loan_request → entity_id = declaration.id  (direct)
+  //   loan_repayment                     → entity_id = loan_repayment.id (via FK)
   const result = await client.query(
-    `SELECT status FROM approvals
-     WHERE entity_id = $1 AND approval_type IN ('savings_declaration', 'loan_request')`,
+    `SELECT a.status FROM approvals a
+     LEFT JOIN loan_repayments lr
+       ON a.approval_type = 'loan_repayment' AND a.entity_id = lr.id
+     WHERE
+       (a.approval_type IN ('savings_declaration', 'loan_request') AND a.entity_id = $1)
+       OR
+       (a.approval_type = 'loan_repayment' AND lr.declaration_id = $1)`,
     [declarationId]
   );
   const statuses = result.rows.map((r) => r.status);
@@ -670,6 +678,12 @@ async function approveLoanRepayment(approvalId, reviewerId) {
       [reviewerId, approvalId]
     );
 
+    // Sync the parent declaration status (new repayments have declaration_id set;
+    // legacy rows without it are skipped gracefully).
+    if (repayment.declaration_id) {
+      await syncDeclarationStatus(client, repayment.declaration_id, reviewerId);
+    }
+
     await client.query('COMMIT');
     return true;
   } catch (error) {
@@ -698,6 +712,12 @@ async function rejectLoanRepayment(approvalId, reviewerId, reason) {
     const approval = approvalResult.rows[0];
     if (approval.status !== 'pending') throw new Error('Approval already processed');
 
+    const repaymentResult = await client.query(
+      'SELECT declaration_id FROM loan_repayments WHERE id = $1',
+      [approval.entity_id]
+    );
+    const repayment = repaymentResult.rows[0];
+
     await client.query(
       `UPDATE loan_repayments
        SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW(), rejection_reason = $2
@@ -711,6 +731,10 @@ async function rejectLoanRepayment(approvalId, reviewerId, reason) {
        WHERE id = $3`,
       [reviewerId, reason, approvalId]
     );
+
+    if (repayment?.declaration_id) {
+      await syncDeclarationStatus(client, repayment.declaration_id, reviewerId);
+    }
 
     await client.query('COMMIT');
     return true;

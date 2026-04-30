@@ -48,8 +48,11 @@ async function processMonthEnd(cycleId) {
       const newAccumulatedSavings = parseFloat(currentBalance.accumulated_savings || 0) + savingsInterest;
 
       // ── Compound each active loan and accumulate total interest accrued ──
+      // NOTE: 'common_interest_pool' loans are Option-B non-compounding loans
+      // (monthly_interest=0). They must NOT have their monthly_interest recalculated
+      // or they would silently start compounding. We use loan_type to guard them.
       const activeLoansResult = await client.query(
-        `SELECT id, outstanding_balance, monthly_interest
+        `SELECT id, loan_type, outstanding_balance, monthly_interest
          FROM loans
          WHERE member_id = $1 AND cycle_id = $2 AND status IN ('disbursed', 'approved')`,
         [memberId, cycleId]
@@ -60,11 +63,12 @@ async function processMonthEnd(cycleId) {
       let totalNewOutstanding = 0;
 
       for (const loan of activeLoans) {
-        const outstanding   = parseFloat(loan.outstanding_balance);
-        const interest      = parseFloat(loan.monthly_interest);
-        const newOutstanding = outstanding + interest;
-        // Next month's interest is based on the new (compounded) balance
-        const newMonthlyInterest = newOutstanding * interestRate;
+        const outstanding        = parseFloat(loan.outstanding_balance);
+        const isPoolLoan         = loan.loan_type === 'common_interest_pool';
+        // Pool loans never compound — keep interest at 0
+        const interest           = isPoolLoan ? 0 : parseFloat(loan.monthly_interest);
+        const newOutstanding     = outstanding + interest;
+        const newMonthlyInterest = isPoolLoan ? 0 : newOutstanding * interestRate;
 
         await client.query(
           `UPDATE loans

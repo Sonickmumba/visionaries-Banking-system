@@ -8,6 +8,7 @@ import {
   useRecordLoanRepaymentMutation,
 } from '../store/api';
 import { exportLoans } from '../utils/csvExport';
+import { formatDate } from '../utils/dateUtils';
 
 export default function LoansPage() {
   const { data: cycle } = useGetActiveCycleQuery();
@@ -449,7 +450,7 @@ export default function LoansPage() {
                       K{loan.amount.toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {loan.disbursedDate}
+                      {formatDate(loan.disbursedDate)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right font-semibold text-red-600">
                       K{loan.outstandingBalance.toLocaleString()}

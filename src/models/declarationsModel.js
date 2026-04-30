@@ -180,11 +180,11 @@ async function submitDeclaration(declarationData) {
       const repaymentResult = await client.query(
         `INSERT INTO loan_repayments
            (loan_id, member_id, cycle_id, amount, reference_number, payment_method,
-            payment_proof_id, status, submitted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW())
+            payment_proof_id, status, submitted_at, declaration_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW(), $8)
          RETURNING id`,
         [loan_id, member_id, cycle_id, principalAmt, refNumber,
-         payment_method, payment_proof_id || null]
+         payment_method, payment_proof_id || null, declaration.id]
       );
 
       await approvalsModel.createApprovalWithClient(

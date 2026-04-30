@@ -82,6 +82,7 @@ async function analyzeBorrowingPatterns(cycleId, month) {
     totalLoans: parseFloat(total_loans),           // cumulative_borrowing (principal only)
     totalSocialFund, totalMembershipFees, totalPool,
     unborrowedMoney, unborrowedInterest, allMembersMetMinimum, availableMethods,
+    interestRate,
     memberDetails: { neverBorrowed, borrowedBelowMinimum, borrowedAtOrAboveMinimum }
   };
 }
@@ -162,6 +163,8 @@ async function calculateAllocations(cycleId, month, allocationMethod) {
 
   return {
     cycleId, month, allocationMethod, commonInterestAmount, allocations,
+    interestRate: analysis.interestRate,
+    unborrowedPrincipal: analysis.unborrowedMoney,
     summary: {
       totalAllocated: allocations.reduce((s, a) => s + a.charge, 0),
       memberCount: allocations.length
@@ -172,12 +175,25 @@ async function calculateAllocations(cycleId, month, allocationMethod) {
 async function applyAllocations(cycleId, month, allocationMethod) {
   // Compute allocations before opening the transaction (read-only)
   const result = await calculateAllocations(cycleId, month, allocationMethod);
+  const interestRate = result.interestRate;
 
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
 
     for (const allocation of result.allocations) {
+      // ── Guard: skip allocations already settled (paid) ───────────────────
+      // Prevents re-applying from accidentally resetting paid allocations or
+      // cancelling pool loans that haven't been repaid yet.
+      const existingCia = await client.query(
+        `SELECT status, pool_loan_id FROM common_interest_allocations
+         WHERE member_id = $1 AND cycle_id = $2 AND month = $3`,
+        [allocation.member_id, cycleId, month]
+      );
+      if (existingCia.rows[0]?.status === 'paid') continue;
+
+      // ── Step 1: Upsert the common interest allocation record ─────────────
+      // Only overwrite status when NOT already 'paid' (guard above ensures this)
       await client.query(
         `INSERT INTO common_interest_allocations (
            member_id, cycle_id, month, eligibility_status, shortfall,
@@ -199,6 +215,7 @@ async function applyAllocations(cycleId, month, allocationMethod) {
         ]
       );
 
+      // ── Step 2: Set common_interest_due in monthly_balances ──────────────
       await client.query(
         `UPDATE monthly_balances
          SET common_interest_due = $1, updated_at = CURRENT_TIMESTAMP
@@ -206,6 +223,7 @@ async function applyAllocations(cycleId, month, allocationMethod) {
         [allocation.charge, allocation.member_id, cycleId, month]
       );
 
+      // ── Step 3: Record common interest assessment transaction ────────────
       await client.query(
         `INSERT INTO transactions (member_id, cycle_id, month, type, amount, date, description)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -215,6 +233,84 @@ async function applyAllocations(cycleId, month, allocationMethod) {
           `Common interest allocated via ${allocationMethod}`
         ]
       );
+
+      // ── Steps 4-8: Create pool loan for the unborrowed principal ─────────
+      // principal = charge / interestRate (since charge = principal × interestRate)
+      const principal = interestRate > 0
+        ? parseFloat((allocation.charge / interestRate).toFixed(2))
+        : 0;
+
+      if (principal > 0) {
+        // Check for an existing pool loan on this allocation (re-apply scenario)
+        const existingPoolLoanId = existingCia.rows[0]?.pool_loan_id ?? null;
+
+        if (existingPoolLoanId) {
+          // Re-application: only cancel the old pool loan if it hasn't been
+          // converted to 'common_interest' by enforcement yet.
+          const oldLoanRow = await client.query(
+            `SELECT amount, loan_type FROM loans WHERE id = $1`,
+            [existingPoolLoanId]
+          );
+          const oldLoan = oldLoanRow.rows[0];
+          if (oldLoan && oldLoan.loan_type === 'common_interest_pool') {
+            const oldPrincipal = parseFloat(oldLoan.amount);
+
+            await client.query(
+              `UPDATE loans SET status = 'repaid', updated_at = CURRENT_TIMESTAMP
+               WHERE id = $1 AND status = 'disbursed'`,
+              [existingPoolLoanId]
+            );
+
+            await client.query(
+              `UPDATE monthly_balances
+               SET outstanding_loan     = GREATEST(0, outstanding_loan - $1),
+                   cumulative_borrowing = GREATEST(0, cumulative_borrowing - $1),
+                   updated_at           = CURRENT_TIMESTAMP
+               WHERE member_id = $2 AND cycle_id = $3 AND month = $4`,
+              [oldPrincipal, allocation.member_id, cycleId, month]
+            );
+          }
+          // else: loan was already converted by enforcement — leave it alone
+        }
+
+        // Insert pool loan — monthly_interest=0 so it never compounds
+        const loanResult = await client.query(
+          `INSERT INTO loans (member_id, cycle_id, loan_type, amount, disbursed_date,
+                              outstanding_balance, monthly_interest, status)
+           VALUES ($1, $2, 'common_interest_pool', $3, CURRENT_DATE, $3, 0, 'disbursed')
+           RETURNING id`,
+          [allocation.member_id, cycleId, principal]
+        );
+        const poolLoanId = loanResult.rows[0].id;
+
+        // Increase outstanding_loan and cumulative_borrowing for this member/month
+        await client.query(
+          `UPDATE monthly_balances
+           SET outstanding_loan     = outstanding_loan + $1,
+               cumulative_borrowing = cumulative_borrowing + $1,
+               updated_at           = CURRENT_TIMESTAMP
+           WHERE member_id = $2 AND cycle_id = $3 AND month = $4`,
+          [principal, allocation.member_id, cycleId, month]
+        );
+
+        // Store principal and loan ID on the allocation row
+        await client.query(
+          `UPDATE common_interest_allocations
+           SET principal_allocated = $1, pool_loan_id = $2, updated_at = CURRENT_TIMESTAMP
+           WHERE member_id = $3 AND cycle_id = $4 AND month = $5`,
+          [principal, poolLoanId, allocation.member_id, cycleId, month]
+        );
+
+        // Record the pool loan disbursement in transactions
+        await client.query(
+          `INSERT INTO transactions (member_id, cycle_id, month, type, amount, date, description)
+           VALUES ($1, $2, $3, 'common_interest_pool_loan', $4, $5, $6)`,
+          [
+            allocation.member_id, cycleId, month, principal, new Date(),
+            `Unborrowed pool principal allocated (month ${month}) via ${allocationMethod}`
+          ]
+        );
+      }
     }
 
     await client.query('COMMIT');
@@ -388,38 +484,63 @@ async function payCommonInterest(cycleId, memberId, month, amount, paymentDate) 
 }
 
 /**
- * Enforce common interest for members who haven't paid by the deadline.
+ * Enforce unpaid common interest for members who haven't paid by the deadline
+ * (3rd of the calendar month following allocation).
  *
- * Called by admin (or automatically during processMonthEnd advance) after
- * the 3rd of the month following allocation.
+ * Called by admin after the payment window closes.
  *
- * For each member with common_interest_due > 0 in month N:
- *   1. Converts the unpaid amount into a loan (type = 'common_interest').
- *   2. Updates monthly_balances: outstanding_loan += amount, common_interest_due = 0.
- *   3. Marks common_interest_allocations.status = 'paid' (settled via loan).
- *   4. Records transaction of type 'common_interest_converted_to_loan'.
+ * Strategy: convert the pool loan IN-PLACE rather than creating a new combined
+ * loan. This preserves loan.amount (used by the dashboard pool formula) and avoids
+ * double-counting principal in total_disbursed_principal.
+ *
+ * For each member with common_interest_due > 0:
+ *
+ *   A. Member HAS an active pool loan (pool_loan_id set):
+ *      1. UPDATE the pool loan: loan_type → 'common_interest',
+ *         outstanding_balance += commonInterestDue, monthly_interest recalculated.
+ *         loan.amount is NOT changed — pool formula stays correct.
+ *      2. UPDATE monthly_balances: outstanding_loan += commonInterestDue (interest only,
+ *         principal was already counted when pool loan was created), common_interest_due = 0.
+ *      3. Clear pool_loan_id on the allocation (loan is no longer a pool loan).
+ *
+ *   B. Member has NO pool loan (pre-feature or member already repaid pool loan):
+ *      1. INSERT a new 'common_interest' loan for commonInterestDue.
+ *      2. UPDATE monthly_balances: outstanding_loan += commonInterestDue, common_interest_due = 0.
+ *
+ *   Both paths: mark CIA 'paid', record 'common_interest_converted_to_loan' transaction.
+ *
+ * Backward-compatible: allocations created before this feature (pool_loan_id = NULL)
+ * follow path B and behave exactly as the original enforcement did.
  *
  * @param {number} cycleId
- * @param {number} month  - The month whose unpaid common interest to enforce
+ * @param {number} month  - The display month to check (usually current_month)
  */
 async function enforceUnpaidCommonInterest(cycleId, month) {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
 
-    // Fetch all members with outstanding common interest for this (display) month.
-    // Also join to find the actual allocation record (which may be from a prior month).
+    // Fetch all members with outstanding common interest due this month.
+    // The LATERAL join finds the oldest 'allocated' CIA row (and its pool_loan_id).
+    // The LEFT JOIN fetches the pool loan's current outstanding_balance (if still active).
     const unpaidResult = await client.query(
-      `SELECT mb.member_id, mb.common_interest_due,
-              cia.id AS allocation_id, cia.month AS allocation_month,
+      `SELECT mb.member_id,
+              COALESCE(mb.common_interest_due, 0) AS common_interest_due,
+              cia.id              AS allocation_id,
+              cia.month           AS allocation_month,
+              cia.pool_loan_id,
+              l.outstanding_balance AS pool_loan_outstanding,
               c.current_month, c.config
        FROM monthly_balances mb
        JOIN cycles c ON c.id = mb.cycle_id
        LEFT JOIN LATERAL (
-         SELECT id, month FROM common_interest_allocations
+         SELECT id, month, pool_loan_id
+         FROM common_interest_allocations
          WHERE member_id = mb.member_id AND cycle_id = mb.cycle_id AND status = 'allocated'
          ORDER BY month ASC LIMIT 1
        ) cia ON TRUE
+       LEFT JOIN loans l
+         ON l.id = cia.pool_loan_id AND l.status IN ('disbursed', 'approved')
        WHERE mb.cycle_id = $1 AND mb.month = $2
          AND mb.common_interest_due > 0`,
       [cycleId, month]
@@ -430,39 +551,91 @@ async function enforceUnpaidCommonInterest(cycleId, month) {
       return { converted: 0, members: [] };
     }
 
-    const cycleConfig = unpaidResult.rows[0].config;
-    const currentMonth = unpaidResult.rows[0].current_month;
+    const cycleConfig      = unpaidResult.rows[0].config;
+    const currentMonth     = unpaidResult.rows[0].current_month;
     const loanInterestRate = cycleConfig.interestRate || 0.15;
-    const converted = [];
+    const converted        = [];
 
     for (const row of unpaidResult.rows) {
-      const memberId         = row.member_id;
-      const unpaidAmount     = parseFloat(row.common_interest_due);
-      const allocationId     = row.allocation_id;
-      const allocationMonth  = row.allocation_month;
+      const memberId          = row.member_id;
+      const commonInterestDue = parseFloat(row.common_interest_due || 0);
+      const poolLoanId        = row.pool_loan_id;
+      const poolLoanOutstanding = row.pool_loan_outstanding
+        ? parseFloat(row.pool_loan_outstanding)
+        : 0;
+      const allocationId    = row.allocation_id;
+      const allocationMonth = row.allocation_month;
 
-      // Create a loan for the unpaid common interest
-      const loanResult = await client.query(
-        `INSERT INTO loans (member_id, cycle_id, loan_type, amount, disbursed_date,
-                            outstanding_balance, monthly_interest, status)
-         VALUES ($1, $2, 'common_interest', $3, CURRENT_DATE, $3, $4, 'disbursed')
-         RETURNING id`,
-        [memberId, cycleId, unpaidAmount, unpaidAmount * loanInterestRate]
-      );
-      const loanId = loanResult.rows[0].id;
+      if (commonInterestDue <= 0) continue;
 
-      // Update the DISPLAY month's balances: outstanding_loan increases, common_interest_due cleared
-      await client.query(
-        `UPDATE monthly_balances
-         SET outstanding_loan     = outstanding_loan + $1,
-             cumulative_borrowing = cumulative_borrowing + $1,
-             common_interest_due  = 0,
-             updated_at           = CURRENT_TIMESTAMP
-         WHERE member_id = $2 AND cycle_id = $3 AND month = $4`,
-        [unpaidAmount, memberId, cycleId, month]
-      );
+      let loanId;
 
-      // Mark the allocation (by primary key to avoid month confusion)
+      if (poolLoanId && poolLoanOutstanding > 0) {
+        // ── Path A: Convert the pool loan in-place ──────────────────────────────────
+        // Add the unpaid interest to the pool loan's outstanding_balance and switch
+        // its type to 'common_interest' so processMonthEnd starts compounding it.
+        // CRITICAL: loan.amount is NOT updated — the pool formula sums loan.amount
+        // for total_disbursed_principal, so leaving it unchanged prevents double-counting.
+        const newOutstanding    = parseFloat((poolLoanOutstanding + commonInterestDue).toFixed(2));
+        const newMonthlyInterest = parseFloat((newOutstanding * loanInterestRate).toFixed(2));
+
+        await client.query(
+          `UPDATE loans
+           SET loan_type           = 'common_interest',
+               outstanding_balance = $1,
+               monthly_interest    = $2,
+               updated_at          = CURRENT_TIMESTAMP
+           WHERE id = $3 AND status IN ('disbursed', 'approved')`,
+          [newOutstanding, newMonthlyInterest, poolLoanId]
+        );
+        loanId = poolLoanId;
+
+        // Clear the pool_loan_id reference (loan is no longer a pool loan)
+        if (allocationId) {
+          await client.query(
+            `UPDATE common_interest_allocations
+             SET pool_loan_id = NULL, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $1`,
+            [allocationId]
+          );
+        }
+
+        // Only the INTEREST portion is newly added to outstanding_loan.
+        // Pool principal was already counted when the pool loan was created.
+        await client.query(
+          `UPDATE monthly_balances
+           SET outstanding_loan     = outstanding_loan + $1,
+               cumulative_borrowing = cumulative_borrowing + $1,
+               common_interest_due  = 0,
+               updated_at           = CURRENT_TIMESTAMP
+           WHERE member_id = $2 AND cycle_id = $3 AND month = $4`,
+          [commonInterestDue, memberId, cycleId, month]
+        );
+
+      } else {
+        // ── Path B: No pool loan (pre-feature or already repaid). Create new loan. ──
+        const newMonthlyInterest = parseFloat((commonInterestDue * loanInterestRate).toFixed(2));
+        const loanResult = await client.query(
+          `INSERT INTO loans (member_id, cycle_id, loan_type, amount, disbursed_date,
+                              outstanding_balance, monthly_interest, status)
+           VALUES ($1, $2, 'common_interest', $3, CURRENT_DATE, $3, $4, 'disbursed')
+           RETURNING id`,
+          [memberId, cycleId, commonInterestDue, newMonthlyInterest]
+        );
+        loanId = loanResult.rows[0].id;
+
+        await client.query(
+          `UPDATE monthly_balances
+           SET outstanding_loan     = outstanding_loan + $1,
+               cumulative_borrowing = cumulative_borrowing + $1,
+               common_interest_due  = 0,
+               updated_at           = CURRENT_TIMESTAMP
+           WHERE member_id = $2 AND cycle_id = $3 AND month = $4`,
+          [commonInterestDue, memberId, cycleId, month]
+        );
+      }
+
+      // ── Mark the allocation settled ─────────────────────────────────────────────────
       if (allocationId) {
         await client.query(
           `UPDATE common_interest_allocations
@@ -472,14 +645,21 @@ async function enforceUnpaidCommonInterest(cycleId, month) {
         );
       }
 
+      // ── Audit transaction ───────────────────────────────────────────────────────────
+      const description = poolLoanId
+        ? `Pool loan (id:${loanId}) converted to common_interest — ` +
+          `principal K${poolLoanOutstanding} + interest K${commonInterestDue} ` +
+          `= K${(poolLoanOutstanding + commonInterestDue).toFixed(2)} (month ${allocationMonth ?? month})`
+        : `Unpaid common interest (month ${allocationMonth ?? month}) ` +
+          `K${commonInterestDue} converted to loan (id: ${loanId})`;
+
       await client.query(
         `INSERT INTO transactions (member_id, cycle_id, month, type, amount, date, description)
          VALUES ($1, $2, $3, 'common_interest_converted_to_loan', $4, CURRENT_DATE, $5)`,
-        [memberId, cycleId, currentMonth, unpaidAmount,
-         `Unpaid common interest (month ${allocationMonth ?? month}) K${unpaidAmount} converted to loan (id: ${loanId})`]
+        [memberId, cycleId, currentMonth, commonInterestDue, description]
       );
 
-      converted.push({ memberId, unpaidAmount, loanId, allocationMonth });
+      converted.push({ memberId, commonInterestDue, poolLoanOutstanding: poolLoanId ? poolLoanOutstanding : 0, loanId, allocationMonth });
     }
 
     await client.query('COMMIT');

@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS loans (
     id SERIAL PRIMARY KEY,
     member_id INTEGER REFERENCES members(id) ON DELETE CASCADE,
     cycle_id INTEGER REFERENCES cycles(id) ON DELETE CASCADE,
-    loan_type VARCHAR(50) NOT NULL CHECK (loan_type IN ('original', 'top_up', 'emergency')),
+    loan_type VARCHAR(50) NOT NULL CHECK (loan_type IN ('original', 'top_up', 'emergency', 'common_interest', 'common_interest_pool')),
     amount DECIMAL(15, 2) NOT NULL,
     disbursed_date DATE NOT NULL,
     outstanding_balance DECIMAL(15, 2) NOT NULL,
@@ -156,6 +156,12 @@ CREATE TABLE IF NOT EXISTS declarations (
 CREATE INDEX idx_declarations_member_cycle_month ON declarations(member_id, cycle_id, month);
 CREATE INDEX idx_declarations_cycle_month ON declarations(cycle_id, month);
 
+-- Link repayment records back to their originating declaration.
+-- Added after declarations to satisfy FK ordering. Safe to re-run (IF NOT EXISTS).
+ALTER TABLE loan_repayments
+  ADD COLUMN IF NOT EXISTS declaration_id INTEGER REFERENCES declarations(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_loan_repayments_declaration_id ON loan_repayments(declaration_id);
 
 -- Create approvals table for unified tracking and audit trail
 CREATE TABLE IF NOT EXISTS approvals (
@@ -212,6 +218,8 @@ CREATE TABLE IF NOT EXISTS common_interest_allocations (
     charge DECIMAL(15, 2) NOT NULL,
     allocation_method VARCHAR(100) NOT NULL,
     status VARCHAR(50) DEFAULT 'allocated' CHECK (status IN ('allocated', 'paid', 'pending')),
+    principal_allocated DECIMAL(15, 2) DEFAULT 0,
+    pool_loan_id        INTEGER REFERENCES loans(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(member_id, cycle_id, month)

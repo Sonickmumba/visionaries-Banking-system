@@ -37,6 +37,7 @@ import {
   useGetPenaltiesQuery,
   useGetLoansQuery,
 } from '../store/api';
+import { formatDateTime } from '../utils/dateUtils';
 
 // --- Helpers ----------------------------------------------------------------
 
@@ -602,7 +603,7 @@ export function DeclarationsPage() {
                       </span>
                     </td>
                     <td className="px-5 py-3 whitespace-nowrap text-gray-500 text-xs">
-                      {new Date(dec.submitted_at).toLocaleString()}
+                      {formatDateTime(dec.submitted_at)}
                     </td>
                     <td className="px-5 py-3 whitespace-nowrap text-right font-medium">
                       {parseFloat(dec.savings_amount) > 0

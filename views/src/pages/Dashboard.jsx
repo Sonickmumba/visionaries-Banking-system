@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { useGetActiveCycleQuery, useGetDashboardQuery, useApplyCommonInterestMutation, useProcessMonthEndMutation } from '../store/api.js';
+import { formatDate } from '../utils/dateUtils.js';
 import {
   analyzeMembers,
   calculateUnborrowedAndInterest,
@@ -568,7 +569,7 @@ const { unborrowed, commonInterest } = useMemo(
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                         {loan.status}
                       </span>
-                      <p className="text-xs text-gray-500 mt-1">{loan.disbursedDate}</p>
+                      <p className="text-xs text-gray-500 mt-1">{formatDate(loan.disbursedDate)}</p>
                     </div>
                   </div>
                 ))}
@@ -597,7 +598,7 @@ const { unborrowed, commonInterest } = useMemo(
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                         {dec.status}
                       </span>
-                      <p className="text-xs text-gray-500 mt-1">{new Date(dec.submittedAt).toLocaleDateString()}</p>
+                      <p className="text-xs text-gray-500 mt-1">{formatDate(dec.submittedAt)}</p>
                     </div>
                   </div>
                 ))}

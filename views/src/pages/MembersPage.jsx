@@ -12,6 +12,7 @@ import {
   useRecordFeePaymentMutation,
 } from '../store/api.js';
 import { exportMembers } from '../utils/csvExport.js';
+import { formatDate } from '../utils/dateUtils.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const INITIAL_FORM = { fullName: '', email: '', phone: '', address: '' };
@@ -532,7 +533,7 @@ export default function MembersPage() {
                   </div>
                   <div>
                     <p className="text-sm text-gray-500">Joined Date</p>
-                    <p className="font-medium text-gray-900">{selectedMember.joinedDate}</p>
+                    <p className="font-medium text-gray-900">{formatDate(selectedMember.joinedDate)}</p>
                   </div>
                 </div>
               </div>
@@ -675,7 +676,7 @@ export default function MembersPage() {
                     <td className="px-6 py-4 text-gray-600">{u.email}</td>
                     <td className="px-6 py-4 text-gray-600">{u.phone ?? '—'}</td>
                     <td className="px-6 py-4 text-gray-500">
-                      {new Date(u.createdAt).toLocaleDateString()}
+                      {formatDate(u.createdAt)}
                     </td>
                     <td className="px-6 py-4 text-right">
                       <button

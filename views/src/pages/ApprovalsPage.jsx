@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useSelector } from 'react-redux';
 import toast from 'react-hot-toast';
+import { formatDate, formatDateTime } from '../utils/dateUtils';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -52,7 +53,7 @@ function formatTimeAgo(dateString) {
   if (diffMins < 60)  return `${diffMins}m ago`;
   const diffHrs  = Math.floor(diffMins / 60);
   if (diffHrs  < 24)  return `${diffHrs}h ago`;
-  return new Date(dateString).toLocaleDateString();
+  return formatDate(dateString);
 }
 
 function formatCurrency(amount) {
@@ -421,7 +422,7 @@ export default function ApprovalsPage() {
                       </div>
                       <div>
                         <span className="text-gray-500">Submitted: </span>
-                        <span className="font-medium">{new Date(a.submitted_at).toLocaleString()}</span>
+                        <span className="font-medium">{formatDateTime(a.submitted_at)}</span>
                       </div>
                       {details.month && (
                         <div><span className="text-gray-500">Month: </span><span className="font-medium">{details.month}</span></div>

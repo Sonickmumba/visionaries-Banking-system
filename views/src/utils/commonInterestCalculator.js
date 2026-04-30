@@ -50,7 +50,8 @@ export function calculateUnborrowedAndInterest(
   membershipFeesCollected,
   totalLoansDisbursed
 ) {
-  const unborrowed = (totalSavings + socialFundCollected + membershipFeesCollected) - totalLoansDisbursed;
+  const raw        = (totalSavings + socialFundCollected + membershipFeesCollected) - totalLoansDisbursed;
+  const unborrowed = Math.max(0, raw);
   const commonInterest = unborrowed * COMMON_INTEREST_RATE;
 
   return { unborrowed, commonInterest };

@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useGetAllCyclesQuery, useCreateCycleMutation } from '../store/api.js';
+import { formatDate } from '../utils/dateUtils.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 const INITIAL_FORM = {
@@ -404,7 +405,7 @@ export default function CyclesPage() {
                 <div>
                   <h3 className="text-xl font-bold text-gray-900">{cycle.name}</h3>
                   <p className="text-sm text-gray-600 mt-1">
-                    {cycle.startDate} to {cycle.endDate}
+                    {formatDate(cycle.startDate)} to {formatDate(cycle.endDate)}
                   </p>
                 </div>
                 <span

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Crown, Lock, Mail, Phone, RefreshCw, Shield, UserPlus, Users } from 'lucide-react';
+import { formatDate } from '../utils/dateUtils';
 import {
   clearUserManagementFeedback,
   createAdminUser,
@@ -213,7 +214,7 @@ export function UserManagementPage() {
                         <p className="break-all">{managedUser.email}</p>
                         <p>{managedUser.phone || 'No phone'}</p>
                         <p className="text-xs text-slate-500">
-                          Created: {managedUser.createdAt ? new Date(managedUser.createdAt).toLocaleDateString() : '-'}
+                          Created: {managedUser.createdAt ? formatDate(managedUser.createdAt) : '-'}
                         </p>
                       </div>
 
@@ -307,7 +308,7 @@ export function UserManagementPage() {
                               </span>
                             </td>
                             <td className="px-4 py-4 text-slate-500">
-                              {managedUser.createdAt ? new Date(managedUser.createdAt).toLocaleDateString() : '-'}
+                              {managedUser.createdAt ? formatDate(managedUser.createdAt) : '-'}
                             </td>
                           </tr>
                         );
